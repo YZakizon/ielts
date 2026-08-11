@@ -86,6 +86,41 @@ textarea {
   display: block;
 }
 
+.login-page {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-panel {
+  display: grid;
+  width: min(420px, 100%);
+  gap: 16px;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow);
+}
+
+.login-panel h1 {
+  font-size: 2rem;
+}
+
+.login-panel label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.login-panel .status-text {
+  justify-self: stretch;
+  min-height: 22px;
+  margin: 0;
+}
+
 .landing-page {
   display: grid;
   gap: 28px;

@@ -10,8 +10,9 @@ services:
       - path: .env
         required: false
     ports:
-      - "${PORT:-8081}:80"
+      - "${IELTS_HOST_PORT:-8081}:8080"
     environment:
+      PORT: 8080
       METRICS_FILE: /data/metrics.json
     volumes:
       - ielts-metrics:/data

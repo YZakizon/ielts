@@ -37,7 +37,26 @@
     </script>
   </head>
   <body>
-    <header class="site-header">
+    <section id="loginPage" class="login-page" aria-label="Login">
+      <form id="loginForm" class="login-panel">
+        <div>
+          <p class="eyebrow">Private access</p>
+          <h1>IELTS Study Hub</h1>
+        </div>
+        <label for="loginUsername">
+          <span>Username</span>
+          <input id="loginUsername" name="username" type="text" autocomplete="username" required />
+        </label>
+        <label for="loginPassword">
+          <span>Password</span>
+          <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
+        </label>
+        <button id="loginBtn" type="submit">Login</button>
+        <p id="loginStatus" class="status-text" role="status"></p>
+      </form>
+    </section>
+
+    <header id="siteHeader" class="site-header hidden">
       <a class="brand" href="#home" aria-label="IELTS Study Hub home">
         <span class="brand-mark">I</span>
         <span>IELTS Study Hub</span>
@@ -46,10 +65,11 @@
         <button id="homePageBtn" class="nav-button active" type="button">Home</button>
         <button id="ieltsVocabPageBtn" class="nav-button" type="button">IELTS Vocab</button>
         <button id="sentenceTranslationPageBtn" class="nav-button" type="button">Sentence Translation</button>
+        <button id="logoutBtn" class="nav-button" type="button">Logout</button>
       </nav>
     </header>
 
-    <main class="app-shell">
+    <main id="appShell" class="app-shell hidden">
       <section id="homePage" class="page-view landing-page" aria-label="IELTS Study Hub homepage">
         <section class="landing-hero">
           <div class="hero-copy">
