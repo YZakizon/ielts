@@ -714,13 +714,15 @@ button:hover {
 .language-controls {
   display: grid;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(2, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(2, minmax(170px, 210px));
+  justify-content: start;
+  column-gap: 8px;
+  row-gap: 10px;
 }
 
 .language-controls label {
   display: grid;
-  gap: 7px;
+  gap: 5px;
   color: var(--muted);
   font-size: 0.86rem;
   font-weight: 850;
