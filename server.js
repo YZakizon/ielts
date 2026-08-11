@@ -1,11 +1,34 @@
 const express = require("express");
+const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("crypto");
+const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
+const { Pool } = require("pg");
 require("dotenv").config();
 
 const app = express();
-const port = process.env.PORT || 80;
+const port = process.env.PORT || 8080;
 const metricsFile = process.env.METRICS_FILE || "/data/metrics.json";
+const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
+const aiRateLimitWindowMs = Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
+const aiRateLimitMax = Number(process.env.AI_RATE_LIMIT_MAX || 20);
+const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
+const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
+const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const aiRateLimitBuckets = new Map();
+const loginRateLimitBuckets = new Map();
+const authUsername = process.env.AUTH_USERNAME || "";
+const authPassword = process.env.AUTH_PASSWORD || "";
+const databaseUrl = process.env.DATABASE_URL || "";
+const sessionSecret = process.env.SESSION_SECRET || "";
+const sessionCookieName = "ielts_session";
+const sessionDurationMs = Number(process.env.SESSION_DURATION_MS || 12 * 60 * 60 * 1000);
+const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
+
+app.set("trust proxy", "loopback");
 
 const labels = {
   beginner: "Beginner",
@@ -51,10 +74,10 @@ function loadMetrics() {
     return {
       aiCallsTotal: Number(saved.aiCallsTotal || 0),
       aiTokensTotal: Number(saved.aiTokensTotal || 0),
-      distinctVocab: Array.isArray(saved.distinctVocab) ? saved.distinctVocab : [],
+      distinctVocab: Array.isArray(saved.distinctVocab) ? saved.distinctVocab.slice(0, maxDistinctVocab) : [],
       sentenceTranslationsByDay: saved.sentenceTranslationsByDay || {},
       sentenceTranslationsTotal: Number(saved.sentenceTranslationsTotal || 0),
-      uniqueUsersByDay: saved.uniqueUsersByDay || {},
+      uniqueUsersByDay: sanitizeUniqueUsersByDay(saved.uniqueUsersByDay),
       vocabByDay: saved.vocabByDay || {},
     };
   } catch {
@@ -70,6 +93,19 @@ function loadMetrics() {
   }
 }
 
+function sanitizeUniqueUsersByDay(value = {}) {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([_day, users]) => Array.isArray(users))
+      .map(([day, users]) => [
+        day,
+        users
+          .filter((userId) => uuidPattern.test(String(userId)))
+          .slice(0, maxDailyUniqueUsers),
+      ]),
+  );
+}
+
 function saveMetrics() {
   try {
     fs.mkdirSync(path.dirname(metricsFile), { recursive: true });
@@ -80,35 +116,142 @@ function saveMetrics() {
 }
 
 function parseCookies(cookieHeader = "") {
-  return Object.fromEntries(
-    cookieHeader
-      .split(";")
-      .map((cookie) => cookie.trim().split("="))
-      .filter(([key, value]) => key && value)
-      .map(([key, value]) => [key, decodeURIComponent(value)]),
+  const cookies = {};
+  cookieHeader
+    .split(";")
+    .map((cookie) => cookie.trim().split("="))
+    .filter(([key, value]) => key && value)
+    .forEach(([key, value]) => {
+      try {
+        cookies[key] = decodeURIComponent(value).slice(0, 2048);
+      } catch {
+        cookies[key] = "";
+      }
+    });
+  return cookies;
+}
+
+function authConfigured() {
+  return Boolean(dbPool && sessionSecret);
+}
+
+function signSession(value) {
+  return createHmac("sha256", sessionSecret).update(value).digest("base64url");
+}
+
+function createSessionToken(username) {
+  const expiresAt = Date.now() + sessionDurationMs;
+  const nonce = randomBytes(16).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ expiresAt, nonce, username })).toString("base64url");
+  return `${payload}.${signSession(payload)}`;
+}
+
+function sameValue(left, right) {
+  const leftBuffer = Buffer.from(String(left));
+  const rightBuffer = Buffer.from(String(right));
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function readSession(req) {
+  if (!authConfigured()) {
+    return null;
+  }
+
+  const token = parseCookies(req.headers.cookie)[sessionCookieName];
+  const [payload, signature] = String(token || "").split(".");
+  if (!payload || !signature || !sameValue(signature, signSession(payload))) {
+    return null;
+  }
+
+  try {
+    const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    if (!session.username || Number(session.expiresAt) < Date.now()) {
+      return null;
+    }
+    return session;
+  } catch {
+    return null;
+  }
+}
+
+function setSessionCookie(req, res, username) {
+  res.cookie(sessionCookieName, createSessionToken(username), {
+    httpOnly: true,
+    maxAge: sessionDurationMs,
+    sameSite: "lax",
+    secure: isSecureRequest(req),
+  });
+}
+
+function clearSessionCookie(res) {
+  res.clearCookie(sessionCookieName, { sameSite: "lax" });
+}
+
+async function findActiveUser(username) {
+  if (!dbPool) {
+    return null;
+  }
+
+  const result = await dbPool.query(
+    "SELECT id, username, password_hash FROM app_users WHERE username = $1 AND is_active = true LIMIT 1",
+    [username],
   );
+  return result.rows[0] || null;
+}
+
+async function requireAuth(req, res, next) {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const session = readSession(req);
+  if (!session) {
+    return res.status(401).json({ error: "Login required." });
+  }
+
+  try {
+    const user = await findActiveUser(session.username);
+    if (!user) {
+      return res.status(401).json({ error: "Login required." });
+    }
+
+    req.session = session;
+    req.user = { id: user.id, username: user.username };
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 function recordUniqueUser(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const userId =
-    cookies.ielts_user_id ||
-    (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : `${Date.now()}-${Math.random()}`);
+    uuidPattern.test(cookies.ielts_user_id || "")
+      ? cookies.ielts_user_id
+      : randomUUID();
 
-  if (!cookies.ielts_user_id) {
+  if (cookies.ielts_user_id !== userId) {
     res.cookie("ielts_user_id", userId, {
-      httpOnly: false,
+      httpOnly: true,
       maxAge: 365 * 24 * 60 * 60 * 1000,
       sameSite: "lax",
+      secure: isSecureRequest(req),
     });
   }
 
   const day = todayKey();
   metrics.uniqueUsersByDay[day] = metrics.uniqueUsersByDay[day] || [];
-  if (!metrics.uniqueUsersByDay[day].includes(userId)) {
+  if (
+    metrics.uniqueUsersByDay[day].length < maxDailyUniqueUsers &&
+    !metrics.uniqueUsersByDay[day].includes(userId)
+  ) {
     metrics.uniqueUsersByDay[day].push(userId);
     saveMetrics();
   }
+}
+
+function isSecureRequest(req) {
+  return req.secure || req.headers["x-forwarded-proto"] === "https";
 }
 
 function recordGeneratedWords(words) {
@@ -121,7 +264,7 @@ function recordGeneratedWords(words) {
       distinct.add(String(item.word).trim().toLowerCase());
     }
   });
-  metrics.distinctVocab = [...distinct].sort();
+  metrics.distinctVocab = [...distinct].sort().slice(0, maxDistinctVocab);
   saveMetrics();
 }
 
@@ -136,6 +279,41 @@ function recordSentenceTranslation() {
   metrics.sentenceTranslationsTotal += 1;
   metrics.sentenceTranslationsByDay[day] = (metrics.sentenceTranslationsByDay[day] || 0) + 1;
   saveMetrics();
+}
+
+async function initializeDatabase() {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for login.");
+  }
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id bigserial PRIMARY KEY,
+      username text UNIQUE NOT NULL,
+      password_hash text NOT NULL,
+      is_active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  if (authUsername && authPassword) {
+    const passwordHash = await bcrypt.hash(authPassword, 12);
+    await dbPool.query(
+      `
+        INSERT INTO app_users (username, password_hash, is_active, updated_at)
+        VALUES ($1, $2, true, now())
+        ON CONFLICT (username) DO UPDATE SET
+          password_hash = EXCLUDED.password_hash,
+          is_active = true,
+          updated_at = now()
+      `,
+      [authUsername, passwordHash],
+    );
+    console.log(`Seeded login user "${authUsername}" in Postgres.`);
+  } else {
+    console.warn("AUTH_USERNAME and AUTH_PASSWORD are not set; no login user was seeded.");
+  }
 }
 
 function metricLine(name, value, labels = {}) {
@@ -209,10 +387,10 @@ function generationRequest(prompt) {
 
 async function fetchGeneratedJson(prompt) {
   const { defaultModel, host, payload, requestedModel } = generationRequest(prompt);
-  let response = await fetch(`https://${host}/v1beta/models/${requestedModel}:generateContent`, payload);
+  let response = await fetchWithTimeout(`https://${host}/v1beta/models/${requestedModel}:generateContent`, payload);
 
   if (response.status === 404 && requestedModel !== defaultModel) {
-    response = await fetch(`https://${host}/v1beta/models/${defaultModel}:generateContent`, payload);
+    response = await fetchWithTimeout(`https://${host}/v1beta/models/${defaultModel}:generateContent`, payload);
   }
 
   if (!response.ok) {
@@ -229,14 +407,182 @@ async function fetchGeneratedJson(prompt) {
   return JSON.parse(text);
 }
 
+async function fetchWithTimeout(url, options) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), aiRequestTimeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function aiRateLimit(req, res, next) {
+  const originalPath = req.originalUrl.split("?")[0];
+  const now = Date.now();
+  if (aiRateLimitBuckets.size > 10000) {
+    for (const [bucketKey, bucket] of aiRateLimitBuckets.entries()) {
+      if (now >= bucket.resetAt) {
+        aiRateLimitBuckets.delete(bucketKey);
+      }
+    }
+  }
+
+  const key = `${req.ip || req.socket.remoteAddress || "unknown"}:${originalPath}`;
+  const bucket = aiRateLimitBuckets.get(key);
+
+  if (!bucket || now >= bucket.resetAt) {
+    aiRateLimitBuckets.set(key, { count: 1, resetAt: now + aiRateLimitWindowMs });
+    next();
+    return;
+  }
+
+  if (bucket.count >= aiRateLimitMax) {
+    res.set("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1000)));
+    return res.status(429).json({ error: "Too many AI requests. Please try again later." });
+  }
+
+  bucket.count += 1;
+  res.set("X-RateLimit-Remaining", String(Math.max(aiRateLimitMax - bucket.count, 0)));
+  next();
+}
+
+function loginRateLimitKey(req, username) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const normalizedUsername = String(username || "").trim().toLowerCase().slice(0, 128) || "empty";
+  return `${ip}:${normalizedUsername}`;
+}
+
+function pruneLoginRateLimitBuckets(now) {
+  if (loginRateLimitBuckets.size <= 10000) {
+    return;
+  }
+
+  for (const [key, bucket] of loginRateLimitBuckets.entries()) {
+    const windowExpired = now - bucket.firstFailureAt >= loginRateLimitWindowMs;
+    const lockoutExpired = !bucket.lockedUntil || now >= bucket.lockedUntil;
+    if (windowExpired && lockoutExpired) {
+      loginRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function getActiveLoginLockout(key) {
+  const now = Date.now();
+  pruneLoginRateLimitBuckets(now);
+
+  const bucket = loginRateLimitBuckets.get(key);
+  if (!bucket) {
+    return null;
+  }
+
+  if (bucket.lockedUntil && now < bucket.lockedUntil) {
+    return bucket;
+  }
+
+  if (now - bucket.firstFailureAt >= loginRateLimitWindowMs) {
+    loginRateLimitBuckets.delete(key);
+  }
+
+  return null;
+}
+
+function recordFailedLogin(key) {
+  const now = Date.now();
+  const bucket = loginRateLimitBuckets.get(key);
+  const nextBucket =
+    bucket && now - bucket.firstFailureAt < loginRateLimitWindowMs
+      ? { ...bucket, failures: bucket.failures + 1 }
+      : { failures: 1, firstFailureAt: now, lockedUntil: 0 };
+
+  if (nextBucket.failures >= loginRateLimitMax) {
+    nextBucket.lockedUntil = now + loginRateLimitLockoutMs;
+  }
+
+  loginRateLimitBuckets.set(key, nextBucket);
+  return nextBucket;
+}
+
+function clearLoginRateLimit(key) {
+  loginRateLimitBuckets.delete(key);
+}
+
+function sendLoginLockout(res, bucket) {
+  res.set("Retry-After", String(Math.ceil((bucket.lockedUntil - Date.now()) / 1000)));
+  return res.status(429).json({ error: "Too many login attempts. Please try again later." });
+}
+
 app.use(express.json({ limit: "32kb" }));
+app.get("/api/session", async (req, res, next) => {
+  try {
+    const session = readSession(req);
+    const user = session ? await findActiveUser(session.username) : null;
+    res.json({
+      authenticated: Boolean(user),
+      configured: authConfigured(),
+      username: user?.username || null,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/login", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const username = String(req.body?.username || "");
+  const password = String(req.body?.password || "");
+  const loginKey = loginRateLimitKey(req, username);
+  const activeLockout = getActiveLoginLockout(loginKey);
+  if (activeLockout) {
+    return sendLoginLockout(res, activeLockout);
+  }
+
+  try {
+    const user = await findActiveUser(username);
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      const failedBucket = recordFailedLogin(loginKey);
+      if (failedBucket.lockedUntil && Date.now() < failedBucket.lockedUntil) {
+        return sendLoginLockout(res, failedBucket);
+      }
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    clearLoginRateLimit(loginKey);
+    setSessionCookie(req, res, user.username);
+    res.json({ authenticated: true, username: user.username });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/logout", (_req, res) => {
+  clearSessionCookie(res);
+  res.json({ authenticated: false });
+});
+
+app.use("/api/vocab", requireAuth);
+app.use("/api/search-vocab", requireAuth);
+app.use("/api/translate-sentence", requireAuth);
+app.use("/api/vocab", aiRateLimit);
+app.use("/api/search-vocab", aiRateLimit);
+app.use("/api/translate-sentence", aiRateLimit);
 app.use((req, res, next) => {
   if (req.path !== "/metrics") {
     recordUniqueUser(req, res);
   }
   next();
 });
-app.use(express.static(__dirname));
+
+app.get("/", (_req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
+});
+
+app.get(["/app.js", "/styles.css"], (req, res) => {
+  res.sendFile(path.join(__dirname, req.path));
+});
 
 app.get("/metrics", (_req, res) => {
   res.type("text/plain; version=0.0.4; charset=utf-8").send(renderMetrics());
@@ -432,6 +778,18 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`IELTS app listening on port ${port}`);
+app.use((error, _req, res, _next) => {
+  console.error(error);
+  res.status(500).json({ error: "Internal server error." });
 });
+
+initializeDatabase()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`IELTS app listening on port ${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error(`Unable to initialize Postgres login: ${error.message}`);
+    process.exit(1);
+  });

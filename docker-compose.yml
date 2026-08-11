@@ -1,6 +1,24 @@
 name: ielts
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ielts-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ielts}
+      POSTGRES_USER: ${POSTGRES_USER:-ielts}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - ielts-postgres:/var/lib/postgresql/data
+    networks:
+      - ielts-internal
+    restart: unless-stopped
+
   ielts:
     build:
       context: .
@@ -10,25 +28,41 @@ services:
       - path: .env
         required: false
     ports:
-      - "${PORT:-8081}:80"
+      - "${IELTS_HOST_PORT:-8081}:8080"
     environment:
+      PORT: 8080
       METRICS_FILE: /data/metrics.json
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ielts}:${POSTGRES_PASSWORD:-ielts_password}@postgres:5432/${POSTGRES_DB:-ielts}}
+      AUTH_USERNAME: ${AUTH_USERNAME:-}
+      AUTH_PASSWORD: ${AUTH_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_DURATION_MS: ${SESSION_DURATION_MS:-43200000}
+      LOGIN_RATE_LIMIT_WINDOW_MS: ${LOGIN_RATE_LIMIT_WINDOW_MS:-900000}
+      LOGIN_RATE_LIMIT_MAX: ${LOGIN_RATE_LIMIT_MAX:-5}
+      LOGIN_RATE_LIMIT_LOCKOUT_MS: ${LOGIN_RATE_LIMIT_LOCKOUT_MS:-900000}
     volumes:
       - ielts-metrics:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       - "traefik.environment=dev"
       - "traefik.http.routers.ielts.rule=Host(`ielts.localhost`)"
       - "traefik.http.routers.ielts.entrypoints=web"
-      - "traefik.http.services.ielts.loadbalancer.server.port=80"
+      - "traefik.http.services.ielts.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-proxy"
     networks:
+      - ielts-internal
       - traefik-proxy
     restart: unless-stopped
 
 networks:
+  ielts-internal:
+    driver: bridge
   traefik-proxy:
     external: true
 
 volumes:
   ielts-metrics:
+  ielts-postgres:

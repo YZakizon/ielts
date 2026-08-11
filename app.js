@@ -702,6 +702,15 @@ const wordPosition = document.querySelector("#wordPosition");
 const searchInput = document.querySelector("#searchInput");
 const searchBtn = document.querySelector("#searchBtn");
 const vocabList = document.querySelector("#vocabList");
+const loginPage = document.querySelector("#loginPage");
+const loginForm = document.querySelector("#loginForm");
+const loginUsername = document.querySelector("#loginUsername");
+const loginPassword = document.querySelector("#loginPassword");
+const loginBtn = document.querySelector("#loginBtn");
+const loginStatus = document.querySelector("#loginStatus");
+const siteHeader = document.querySelector("#siteHeader");
+const appShell = document.querySelector("#appShell");
+const logoutBtn = document.querySelector("#logoutBtn");
 const homePage = document.querySelector("#homePage");
 const ieltsVocabPage = document.querySelector("#ieltsVocabPage");
 const sentenceTranslationPage = document.querySelector("#sentenceTranslationPage");
@@ -744,6 +753,7 @@ const historyStorageKey = "ielts-vocab-history";
 const generatedStorageKey = "ielts-vocab-generated-batches";
 const appStateStorageKey = "ielts-vocab-app-state";
 const defaultVisibleWordCount = 5;
+let appStarted = false;
 
 const englishVariantLabels = {
   us: "US English",
@@ -780,15 +790,23 @@ function escapeHtml(value) {
 }
 
 function withLocalDetails(item) {
+  const word = String(item?.word || "").trim();
+  const fallback = localIndonesianDetails[word] || {};
   return {
     ...item,
+    word,
+    phonetic: String(item?.phonetic || "").trim(),
+    translation: String(item?.translation || "").trim(),
+    synonyms: Array.isArray(item?.synonyms)
+      ? item.synonyms.slice(0, 6).map((synonym) => String(synonym).trim()).filter(Boolean)
+      : [],
+    usage: String(item?.usage || "").trim(),
     usageTranslation:
-      item.usageTranslation ||
-      localIndonesianDetails[item.word]?.usageTranslation ||
+      String(item?.usageTranslation || fallback.usageTranslation || "").trim() ||
       "Translation is not available for this explanation yet.",
+    example: String(item?.example || "").trim(),
     exampleTranslation:
-      item.exampleTranslation ||
-      localIndonesianDetails[item.word]?.exampleTranslation ||
+      String(item?.exampleTranslation || fallback.exampleTranslation || "").trim() ||
       "Translation is not available for this example yet.",
   };
 }
@@ -933,6 +951,39 @@ function setStatus(message, isError = false) {
   statusText.classList.toggle("error", isError);
 }
 
+function setLoginStatus(message, isError = false) {
+  loginStatus.textContent = message;
+  loginStatus.classList.toggle("error", isError);
+}
+
+function showAuthenticatedApp() {
+  loginPage.classList.add("hidden");
+  siteHeader.classList.remove("hidden");
+  appShell.classList.remove("hidden");
+}
+
+function showLogin() {
+  loginPage.classList.remove("hidden");
+  siteHeader.classList.add("hidden");
+  appShell.classList.add("hidden");
+  loginPassword.value = "";
+  loginUsername.focus();
+}
+
+function handleUnauthorized() {
+  appStarted = false;
+  showLogin();
+  setLoginStatus("Please login to continue.", true);
+}
+
+async function fetchJson(url, options = {}) {
+  const response = await fetch(url, options);
+  if (response.status === 401) {
+    handleUnauthorized();
+  }
+  return response;
+}
+
 function showPage(pageName, shouldUpdateHash = true) {
   const pageMap = {
     home: homePage,
@@ -1021,7 +1072,7 @@ async function generateWithAi(level, variant, targetLanguage) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
-  const response = await fetch("/api/vocab", {
+  const response = await fetchJson("/api/vocab", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1044,7 +1095,7 @@ async function searchWithAi(query, variant, targetLanguage) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
-  const response = await fetch("/api/search-vocab", {
+  const response = await fetchJson("/api/search-vocab", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -1114,7 +1165,7 @@ async function translateSentence() {
   const timeoutId = window.setTimeout(() => controller.abort(), 18000);
 
   try {
-    const response = await fetch("/api/translate-sentence", {
+    const response = await fetchJson("/api/translate-sentence", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1292,14 +1343,14 @@ function renderList() {
       (item) => `
         <button class="word-button ${
           selectedWord?.word === item.word ? "active" : ""
-        }" type="button" data-word="${item.word}">
+        }" type="button" data-word="${escapeHtml(item.word)}">
           <span class="word-main">
-            <span class="word">${item.word}</span>
-            <span class="phonetic">${item.phonetic}</span>
+            <span class="word">${escapeHtml(item.word)}</span>
+            <span class="phonetic">${escapeHtml(item.phonetic)}</span>
           </span>
-          <span class="level-tag">${labels[levelSelect.value]} · ${
-            translationLanguageLabels[vocabTargetLanguageSelect.value]
-          }</span>
+          <span class="level-tag">${escapeHtml(labels[levelSelect.value])} · ${escapeHtml(
+            translationLanguageLabels[vocabTargetLanguageSelect.value],
+          )}</span>
         </button>
       `,
     )
@@ -1330,8 +1381,8 @@ function renderHistory() {
     historyList.innerHTML = historyWords
       .map(
         (item) => `
-          <button class="history-item" type="button" data-word="${item.word}">
-            ${item.word}
+          <button class="history-item" type="button" data-word="${escapeHtml(item.word)}">
+            ${escapeHtml(item.word)}
           </button>
         `,
       )
@@ -1346,18 +1397,18 @@ function renderHistory() {
   batchHistoryList.innerHTML = generatedBatches
     .map(
       (batch) => `
-        <article class="batch-card" data-batch-id="${batch.id}">
+        <article class="batch-card" data-batch-id="${escapeHtml(batch.id)}">
           <div class="batch-meta">
-            <span>${labels[batch.level] || batch.level}</span>
-            <span>${englishVariantLabels[batch.variant] || batch.variant}</span>
-            <span>${new Date(batch.createdAt).toLocaleString()}</span>
+            <span>${escapeHtml(labels[batch.level] || batch.level)}</span>
+            <span>${escapeHtml(englishVariantLabels[batch.variant] || batch.variant)}</span>
+            <span>${escapeHtml(new Date(batch.createdAt).toLocaleString())}</span>
           </div>
           <div class="batch-words">
             ${batch.words
               .map(
                 (item) => `
-                  <button class="history-item" type="button" data-word="${item.word}">
-                    ${item.word}
+                  <button class="history-item" type="button" data-word="${escapeHtml(item.word)}">
+                    ${escapeHtml(item.word)}
                   </button>
                 `,
               )
@@ -1372,31 +1423,31 @@ function renderHistory() {
 function renderDetail(item) {
   detailContent.className = "detail-content";
   detailContent.innerHTML = `
-    <h3 class="detail-title">${item.word}</h3>
-    <p class="detail-phonetic">${item.phonetic}</p>
-    <div class="translation">${item.translation}</div>
+    <h3 class="detail-title">${escapeHtml(item.word)}</h3>
+    <p class="detail-phonetic">${escapeHtml(item.phonetic)}</p>
+    <div class="translation">${escapeHtml(item.translation)}</div>
 
     <section class="detail-section">
       <h3>Synonyms</h3>
       <div class="chips">
-        ${item.synonyms.map((synonym) => `<span class="chip">${synonym}</span>`).join("")}
+        ${item.synonyms.map((synonym) => `<span class="chip">${escapeHtml(synonym)}</span>`).join("")}
       </div>
     </section>
 
     <section class="detail-section">
       <h3>How to use</h3>
       <p class="language-label">English</p>
-      <p>${item.usage}</p>
+      <p>${escapeHtml(item.usage)}</p>
       <p class="language-label">Translation</p>
-      <p>${item.usageTranslation}</p>
+      <p>${escapeHtml(item.usageTranslation)}</p>
     </section>
 
     <section class="detail-section">
       <h3>Example</h3>
       <p class="language-label">English</p>
-      <p class="example">${item.example}</p>
+      <p class="example">${escapeHtml(item.example)}</p>
       <p class="language-label">Translation</p>
-      <p class="example translated-example">${item.exampleTranslation}</p>
+      <p class="example translated-example">${escapeHtml(item.exampleTranslation)}</p>
     </section>
   `;
 }
@@ -1487,6 +1538,77 @@ function renderEmptyState() {
   `;
 }
 
+async function login(event) {
+  event.preventDefault();
+  setLoginStatus("");
+  loginBtn.disabled = true;
+
+  try {
+    const response = await fetch("/api/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: loginUsername.value.trim(),
+        password: loginPassword.value,
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || "Login failed.");
+    }
+
+    setLoginStatus("");
+    showAuthenticatedApp();
+    startApp();
+  } catch (error) {
+    setLoginStatus(error.message, true);
+  } finally {
+    loginBtn.disabled = false;
+  }
+}
+
+async function logout() {
+  await fetch("/api/logout", { method: "POST" }).catch(() => {});
+  showLogin();
+  setLoginStatus("Logged out.");
+}
+
+async function checkSession() {
+  try {
+    const response = await fetch("/api/session");
+    const session = await response.json();
+    if (!session.configured) {
+      showLogin();
+      setLoginStatus("Login is not configured on the server.", true);
+      return;
+    }
+    if (!session.authenticated) {
+      showLogin();
+      return;
+    }
+
+    showAuthenticatedApp();
+    startApp();
+  } catch {
+    showLogin();
+    setLoginStatus("Could not check login status.", true);
+  }
+}
+
+function startApp() {
+  if (appStarted) return;
+  appStarted = true;
+
+  loadHistory();
+  renderHistory();
+  if (!loadAppState()) {
+    generateWords();
+  }
+  updateSentenceCount();
+  updateTranslationLanguageLabels();
+  showPage(window.location.hash.replace("#", "") || "home", false);
+}
+
 vocabList.addEventListener("click", (event) => {
   const button = event.target.closest(".word-button");
   if (!button) return;
@@ -1529,6 +1651,8 @@ batchHistoryList.addEventListener("click", (event) => {
 });
 
 generateBtn.addEventListener("click", generateWords);
+loginForm.addEventListener("submit", login);
+logoutBtn.addEventListener("click", logout);
 oneByOneToggle.addEventListener("change", () => {
   currentWordIndex = Math.max(
     0,
@@ -1608,11 +1732,4 @@ levelSelect.addEventListener("change", generateWords);
 englishVariantSelect.addEventListener("change", generateWords);
 vocabTargetLanguageSelect.addEventListener("change", generateWords);
 
-loadHistory();
-renderHistory();
-if (!loadAppState()) {
-  generateWords();
-}
-updateSentenceCount();
-updateTranslationLanguageLabels();
-showPage(window.location.hash.replace("#", "") || "home", false);
+checkSession();
