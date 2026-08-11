@@ -52,6 +52,8 @@ function loadMetrics() {
       aiCallsTotal: Number(saved.aiCallsTotal || 0),
       aiTokensTotal: Number(saved.aiTokensTotal || 0),
       distinctVocab: Array.isArray(saved.distinctVocab) ? saved.distinctVocab : [],
+      sentenceTranslationsByDay: saved.sentenceTranslationsByDay || {},
+      sentenceTranslationsTotal: Number(saved.sentenceTranslationsTotal || 0),
       uniqueUsersByDay: saved.uniqueUsersByDay || {},
       vocabByDay: saved.vocabByDay || {},
     };
@@ -60,6 +62,8 @@ function loadMetrics() {
       aiCallsTotal: 0,
       aiTokensTotal: 0,
       distinctVocab: [],
+      sentenceTranslationsByDay: {},
+      sentenceTranslationsTotal: 0,
       uniqueUsersByDay: {},
       vocabByDay: {},
     };
@@ -127,6 +131,13 @@ function recordAiUsage(data) {
   saveMetrics();
 }
 
+function recordSentenceTranslation() {
+  const day = todayKey();
+  metrics.sentenceTranslationsTotal += 1;
+  metrics.sentenceTranslationsByDay[day] = (metrics.sentenceTranslationsByDay[day] || 0) + 1;
+  saveMetrics();
+}
+
 function metricLine(name, value, labels = {}) {
   const labelEntries = Object.entries(labels);
   const renderedLabels = labelEntries.length
@@ -150,6 +161,14 @@ function renderMetrics() {
     "# TYPE ielts_vocab_per_day_total counter",
     ...Object.entries(metrics.vocabByDay).map(([day, count]) =>
       metricLine("ielts_vocab_per_day_total", count, { day }),
+    ),
+    "# HELP ielts_sentence_translations_total Total successful sentence translations.",
+    "# TYPE ielts_sentence_translations_total counter",
+    metricLine("ielts_sentence_translations_total", metrics.sentenceTranslationsTotal),
+    "# HELP ielts_sentence_translations_per_day_total Number of successful sentence translations per day.",
+    "# TYPE ielts_sentence_translations_per_day_total counter",
+    ...Object.entries(metrics.sentenceTranslationsByDay).map(([day, count]) =>
+      metricLine("ielts_sentence_translations_per_day_total", count, { day }),
     ),
     "# HELP ielts_unique_users_per_day Unique browser users per day.",
     "# TYPE ielts_unique_users_per_day gauge",
@@ -402,6 +421,7 @@ Use the Band 8-9 requirements for the ${targetLabel} translation while preservin
     if (!generated.translation) {
       return res.status(502).json({ error: "AI service returned invalid translation data." });
     }
+    recordSentenceTranslation();
     res.json(generated);
   } catch (error) {
     res.status(502).json({ error: error.message || "Sentence translation failed." });
