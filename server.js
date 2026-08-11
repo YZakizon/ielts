@@ -344,13 +344,21 @@ app.post("/api/translate-sentence", async (req, res) => {
   const sourceLabel = translationLanguageLabels[sourceLanguage];
   const targetLabel = translationLanguageLabels[targetLanguage];
   const needsIeltsFeedback = sourceLanguage === "english";
+  const targetInstruction =
+    targetLanguage === "english"
+      ? "advanced IELTS-level English with precise academic vocabulary, cohesive phrasing, and a natural formal tone"
+      : `natural ${targetLabel}`;
+  const translationDescription =
+    targetLanguage === "english"
+      ? "Advanced IELTS-level English translation"
+      : `Natural ${targetLabel} translation`;
   const prompt = `
-Translate this sentence or short paragraph from ${sourceLabel} into natural ${targetLabel}:
+Translate this sentence or short paragraph from ${sourceLabel} into ${targetInstruction}:
 "${text.replaceAll('"', '\\"')}"
 
 Return only valid JSON with this shape:
 {
-  "translation": "Natural ${targetLabel} translation",
+  "translation": "${translationDescription}",
   "keyPhrases": [
     { "source": "important source phrase", "target": "meaning in ${targetLabel}" }
   ],
@@ -364,7 +372,11 @@ Return only valid JSON with this shape:
   }
 }
 ${needsIeltsFeedback ? "Because the source language is English, provide concise correction and IELTS learner suggestions." : "Because the source language is not English, leave ieltsFeedback fields empty."}
-Keep the translation faithful to the original meaning. Use natural ${targetLabel}, no markdown, and no extra keys.
+Keep the translation faithful to the original meaning. ${
+    targetLanguage === "english"
+      ? "Make the English suitable for advanced IELTS learners without changing facts, adding unsupported ideas, or making the sentence unnecessarily complex."
+      : `Use natural ${targetLabel}.`
+  } Use no markdown and no extra keys.
 `;
 
   try {
