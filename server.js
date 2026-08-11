@@ -356,23 +356,25 @@ app.post("/api/translate-sentence", async (req, res) => {
   const targetLabel = translationLanguageLabels[targetLanguage];
   const needsIeltsFeedback = isEnglishLanguage(sourceLanguage);
   const sourceLanguageForPrompt =
-    sourceLanguage === "auto" ? "the following sentence" : `the following ${sourceLabel} sentence`;
+    sourceLanguage === "auto" ? "the following text" : `the following ${sourceLabel} text`;
   const englishTargetRequirements = `
 For the "translation" field, translate ${sourceLanguageForPrompt} into natural, polished IELTS Band 8-9 ${targetLabel}.
 Requirements for the "translation" field:
 - Preserve the original meaning accurately.
 - Use sophisticated but natural vocabulary.
-- Prefer precise, elegant wording over basic vocabulary.
+- Prefer precise, elegant, formal phrasing over casual or conversational wording.
 - Use advanced collocations where appropriate.
-- Do not make the sentence overly literary, poetic, or dramatic.
-- Avoid unnatural thesaurus-style word choices.
-- Keep the sentence concise and fluent.
-- The result should sound like something an educated native English speaker would naturally write.
-- Return only the translated sentence inside the "translation" field.
+- Prefer expressions such as "throughout the entire journey" over casual alternatives such as "all along the way" when the meaning supports it.
+- Avoid overly poetic, literary, or dramatic language.
+- Avoid unnatural thesaurus-style vocabulary.
+- Do not simplify the meaning.
+- Keep the translation concise, fluent, and grammatically polished.
+- Make it sound like educated, natural English rather than a literal translation.
+- Return only the translated English text inside the "translation" field.
 `;
   const translationDescription = `Natural, polished IELTS Band 8-9 ${targetLabel} translation`;
   const prompt = `
-Translate this sentence or short paragraph from ${sourceLabel} into natural, polished IELTS Band 8-9 ${targetLabel}:
+Translate this text from ${sourceLabel} into natural, polished IELTS Band 8-9 ${targetLabel}:
 "${text.replaceAll('"', '\\"')}"
 ${englishTargetRequirements}
 
