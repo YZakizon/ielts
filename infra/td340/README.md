@@ -19,10 +19,14 @@ DATABASE_URL=postgresql://ielts:change_this_postgres_password@postgres:5432/ielt
 AUTH_USERNAME=admin
 AUTH_PASSWORD=change_me
 SESSION_SECRET=replace_with_a_long_random_secret
+LOGIN_RATE_LIMIT_WINDOW_MS=900000
+LOGIN_RATE_LIMIT_MAX=5
+LOGIN_RATE_LIMIT_LOCKOUT_MS=900000
 ```
 
 `AUTH_USERNAME` and `AUTH_PASSWORD` seed or update the initial login user in
 Postgres on startup. The app stores only a bcrypt password hash.
+Failed login attempts are rate-limited by IP and username.
 
 2. Deploy the app:
 

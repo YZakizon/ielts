@@ -12,10 +12,14 @@ const metricsFile = process.env.METRICS_FILE || "/data/metrics.json";
 const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
 const aiRateLimitWindowMs = Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
 const aiRateLimitMax = Number(process.env.AI_RATE_LIMIT_MAX || 20);
+const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
+const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
 const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
 const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const aiRateLimitBuckets = new Map();
+const loginRateLimitBuckets = new Map();
 const authUsername = process.env.AUTH_USERNAME || "";
 const authPassword = process.env.AUTH_PASSWORD || "";
 const databaseUrl = process.env.DATABASE_URL || "";
@@ -443,6 +447,71 @@ function aiRateLimit(req, res, next) {
   next();
 }
 
+function loginRateLimitKey(req, username) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const normalizedUsername = String(username || "").trim().toLowerCase().slice(0, 128) || "empty";
+  return `${ip}:${normalizedUsername}`;
+}
+
+function pruneLoginRateLimitBuckets(now) {
+  if (loginRateLimitBuckets.size <= 10000) {
+    return;
+  }
+
+  for (const [key, bucket] of loginRateLimitBuckets.entries()) {
+    const windowExpired = now - bucket.firstFailureAt >= loginRateLimitWindowMs;
+    const lockoutExpired = !bucket.lockedUntil || now >= bucket.lockedUntil;
+    if (windowExpired && lockoutExpired) {
+      loginRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function getActiveLoginLockout(key) {
+  const now = Date.now();
+  pruneLoginRateLimitBuckets(now);
+
+  const bucket = loginRateLimitBuckets.get(key);
+  if (!bucket) {
+    return null;
+  }
+
+  if (bucket.lockedUntil && now < bucket.lockedUntil) {
+    return bucket;
+  }
+
+  if (now - bucket.firstFailureAt >= loginRateLimitWindowMs) {
+    loginRateLimitBuckets.delete(key);
+  }
+
+  return null;
+}
+
+function recordFailedLogin(key) {
+  const now = Date.now();
+  const bucket = loginRateLimitBuckets.get(key);
+  const nextBucket =
+    bucket && now - bucket.firstFailureAt < loginRateLimitWindowMs
+      ? { ...bucket, failures: bucket.failures + 1 }
+      : { failures: 1, firstFailureAt: now, lockedUntil: 0 };
+
+  if (nextBucket.failures >= loginRateLimitMax) {
+    nextBucket.lockedUntil = now + loginRateLimitLockoutMs;
+  }
+
+  loginRateLimitBuckets.set(key, nextBucket);
+  return nextBucket;
+}
+
+function clearLoginRateLimit(key) {
+  loginRateLimitBuckets.delete(key);
+}
+
+function sendLoginLockout(res, bucket) {
+  res.set("Retry-After", String(Math.ceil((bucket.lockedUntil - Date.now()) / 1000)));
+  return res.status(429).json({ error: "Too many login attempts. Please try again later." });
+}
+
 app.use(express.json({ limit: "32kb" }));
 app.get("/api/session", async (req, res, next) => {
   try {
@@ -465,13 +534,23 @@ app.post("/api/login", async (req, res, next) => {
 
   const username = String(req.body?.username || "");
   const password = String(req.body?.password || "");
+  const loginKey = loginRateLimitKey(req, username);
+  const activeLockout = getActiveLoginLockout(loginKey);
+  if (activeLockout) {
+    return sendLoginLockout(res, activeLockout);
+  }
 
   try {
     const user = await findActiveUser(username);
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      const failedBucket = recordFailedLogin(loginKey);
+      if (failedBucket.lockedUntil && Date.now() < failedBucket.lockedUntil) {
+        return sendLoginLockout(res, failedBucket);
+      }
       return res.status(401).json({ error: "Invalid username or password." });
     }
 
+    clearLoginRateLimit(loginKey);
     setSessionCookie(req, res, user.username);
     res.json({ authenticated: true, username: user.username });
   } catch (error) {
