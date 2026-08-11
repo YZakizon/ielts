@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>IELTS Vocabulary Builder</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="toolbar" aria-label="Vocabulary controls">
+        <div>
+          <p class="eyebrow">IELTS Vocabulary</p>
+          <h1>English to Bahasa Indonesia</h1>
+        </div>
+        <nav class="top-nav" aria-label="Main navigation">
+          <button id="vocabViewBtn" class="nav-button active" type="button">Vocabulary</button>
+          <button id="historyViewBtn" class="nav-button" type="button">History</button>
+        </nav>
+        <div class="controls">
+          <label for="levelSelect">Level</label>
+          <select id="levelSelect">
+            <option value="beginner">Beginner</option>
+            <option value="medium" selected>Medium</option>
+            <option value="advance">Advance</option>
+            <option value="more-advance">More Advance</option>
+          </select>
+          <label for="englishVariantSelect">English</label>
+          <select id="englishVariantSelect">
+            <option value="us">US English</option>
+            <option value="british">British English</option>
+          </select>
+          <button id="generateBtn" type="button">Generate</button>
+        </div>
+        <div class="search-controls">
+          <label for="searchInput">Search vocab</label>
+          <input id="searchInput" type="search" placeholder="Type a word" />
+          <button id="searchBtn" type="button">Search</button>
+        </div>
+        <p id="statusText" class="status-text" role="status"></p>
+      </section>
+
+      <section id="studyView" class="study-grid" aria-label="Vocabulary study area">
+        <aside class="panel vocab-panel">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Left side</p>
+              <h2>Vocabulary</h2>
+            </div>
+            <span id="wordCount" class="count">0 words</span>
+          </div>
+          <div class="step-controls">
+            <label class="checkbox-control" for="oneByOneToggle">
+              <input id="oneByOneToggle" type="checkbox" />
+              <span>Show one by one</span>
+            </label>
+            <button id="prevWordBtn" class="ghost-button" type="button">Prev</button>
+            <span id="wordPosition" class="word-position">0 / 0</span>
+            <button id="nextWordBtn" class="ghost-button" type="button">Next</button>
+          </div>
+          <div id="vocabList" class="vocab-list" aria-live="polite"></div>
+        </aside>
+
+        <section class="panel detail-panel" aria-live="polite">
+          <div class="panel-header">
+            <div>
+              <p class="eyebrow">Right side</p>
+              <h2>Translation & Usage</h2>
+            </div>
+          </div>
+          <article id="detailContent" class="detail-content empty-state">
+            <div class="empty-visual" aria-hidden="true">Aa</div>
+            <h3>Click one vocabulary item</h3>
+            <p>
+              The Bahasa Indonesia translation, synonyms, usage explanation,
+              and IELTS-style example will appear here.
+            </p>
+          </article>
+        </section>
+      </section>
+
+      <section id="historyView" class="history-view panel hidden" aria-label="Vocabulary history">
+        <div class="panel-header">
+          <div>
+            <p class="eyebrow">Saved locally</p>
+            <h2>History</h2>
+          </div>
+          <button id="clearHistoryBtn" class="ghost-button" type="button">Clear</button>
+        </div>
+        <div class="history-content">
+          <section>
+            <h3>Words</h3>
+            <div id="historyList" class="history-list"></div>
+          </section>
+          <section>
+            <h3>Generated batches</h3>
+            <div id="batchHistoryList" class="batch-history-list"></div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>

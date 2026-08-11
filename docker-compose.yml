@@ -1,0 +1,34 @@
+name: ielts
+
+services:
+  ielts:
+    build:
+      context: .
+    image: ielts:local
+    container_name: ielts
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "${PORT:-8081}:80"
+    environment:
+      METRICS_FILE: /data/metrics.json
+    volumes:
+      - ielts-metrics:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.environment=dev"
+      - "traefik.http.routers.ielts.rule=Host(`ielts.localhost`)"
+      - "traefik.http.routers.ielts.entrypoints=web"
+      - "traefik.http.services.ielts.loadbalancer.server.port=80"
+      - "traefik.docker.network=traefik-proxy"
+    networks:
+      - traefik-proxy
+    restart: unless-stopped
+
+networks:
+  traefik-proxy:
+    external: true
+
+volumes:
+  ielts-metrics:

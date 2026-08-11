@@ -1,0 +1,21 @@
+name: ielts
+
+services:
+  ielts:
+    build:
+      context: .
+    image: ielts:td340
+    container_name: ielts
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "127.0.0.1:${IELTS_HOST_PORT:-8091}:80"
+    environment:
+      METRICS_FILE: /data/metrics.json
+    volumes:
+      - ielts-metrics:/data
+    restart: unless-stopped
+
+volumes:
+  ielts-metrics:
