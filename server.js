@@ -1,7 +1,9 @@
 const express = require("express");
 const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("crypto");
+const bcrypt = require("bcryptjs");
 const fs = require("fs");
 const path = require("path");
+const { Pool } = require("pg");
 require("dotenv").config();
 
 const app = express();
@@ -16,9 +18,11 @@ const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}
 const aiRateLimitBuckets = new Map();
 const authUsername = process.env.AUTH_USERNAME || "";
 const authPassword = process.env.AUTH_PASSWORD || "";
+const databaseUrl = process.env.DATABASE_URL || "";
 const sessionSecret = process.env.SESSION_SECRET || "";
 const sessionCookieName = "ielts_session";
 const sessionDurationMs = Number(process.env.SESSION_DURATION_MS || 12 * 60 * 60 * 1000);
+const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
 
 app.set("trust proxy", "loopback");
 
@@ -124,7 +128,7 @@ function parseCookies(cookieHeader = "") {
 }
 
 function authConfigured() {
-  return Boolean(authUsername && authPassword && sessionSecret);
+  return Boolean(dbPool && sessionSecret);
 }
 
 function signSession(value) {
@@ -157,7 +161,7 @@ function readSession(req) {
 
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (session.username !== authUsername || Number(session.expiresAt) < Date.now()) {
+    if (!session.username || Number(session.expiresAt) < Date.now()) {
       return null;
     }
     return session;
@@ -179,9 +183,21 @@ function clearSessionCookie(res) {
   res.clearCookie(sessionCookieName, { sameSite: "lax" });
 }
 
-function requireAuth(req, res, next) {
+async function findActiveUser(username) {
+  if (!dbPool) {
+    return null;
+  }
+
+  const result = await dbPool.query(
+    "SELECT id, username, password_hash FROM app_users WHERE username = $1 AND is_active = true LIMIT 1",
+    [username],
+  );
+  return result.rows[0] || null;
+}
+
+async function requireAuth(req, res, next) {
   if (!authConfigured()) {
-    return res.status(503).json({ error: "Login is not configured. Set AUTH_USERNAME, AUTH_PASSWORD, and SESSION_SECRET." });
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
   }
 
   const session = readSession(req);
@@ -189,8 +205,18 @@ function requireAuth(req, res, next) {
     return res.status(401).json({ error: "Login required." });
   }
 
-  req.session = session;
-  next();
+  try {
+    const user = await findActiveUser(session.username);
+    if (!user) {
+      return res.status(401).json({ error: "Login required." });
+    }
+
+    req.session = session;
+    req.user = { id: user.id, username: user.username };
+    next();
+  } catch (error) {
+    next(error);
+  }
 }
 
 function recordUniqueUser(req, res) {
@@ -249,6 +275,41 @@ function recordSentenceTranslation() {
   metrics.sentenceTranslationsTotal += 1;
   metrics.sentenceTranslationsByDay[day] = (metrics.sentenceTranslationsByDay[day] || 0) + 1;
   saveMetrics();
+}
+
+async function initializeDatabase() {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for login.");
+  }
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS app_users (
+      id bigserial PRIMARY KEY,
+      username text UNIQUE NOT NULL,
+      password_hash text NOT NULL,
+      is_active boolean NOT NULL DEFAULT true,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  if (authUsername && authPassword) {
+    const passwordHash = await bcrypt.hash(authPassword, 12);
+    await dbPool.query(
+      `
+        INSERT INTO app_users (username, password_hash, is_active, updated_at)
+        VALUES ($1, $2, true, now())
+        ON CONFLICT (username) DO UPDATE SET
+          password_hash = EXCLUDED.password_hash,
+          is_active = true,
+          updated_at = now()
+      `,
+      [authUsername, passwordHash],
+    );
+    console.log(`Seeded login user "${authUsername}" in Postgres.`);
+  } else {
+    console.warn("AUTH_USERNAME and AUTH_PASSWORD are not set; no login user was seeded.");
+  }
 }
 
 function metricLine(name, value, labels = {}) {
@@ -383,27 +444,39 @@ function aiRateLimit(req, res, next) {
 }
 
 app.use(express.json({ limit: "32kb" }));
-app.get("/api/session", (req, res) => {
-  res.json({
-    authenticated: Boolean(readSession(req)),
-    configured: authConfigured(),
-    username: readSession(req)?.username || null,
-  });
+app.get("/api/session", async (req, res, next) => {
+  try {
+    const session = readSession(req);
+    const user = session ? await findActiveUser(session.username) : null;
+    res.json({
+      authenticated: Boolean(user),
+      configured: authConfigured(),
+      username: user?.username || null,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.post("/api/login", (req, res) => {
+app.post("/api/login", async (req, res, next) => {
   if (!authConfigured()) {
-    return res.status(503).json({ error: "Login is not configured. Set AUTH_USERNAME, AUTH_PASSWORD, and SESSION_SECRET." });
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
   }
 
   const username = String(req.body?.username || "");
   const password = String(req.body?.password || "");
-  if (!sameValue(username, authUsername) || !sameValue(password, authPassword)) {
-    return res.status(401).json({ error: "Invalid username or password." });
-  }
 
-  setSessionCookie(req, res, username);
-  res.json({ authenticated: true, username });
+  try {
+    const user = await findActiveUser(username);
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      return res.status(401).json({ error: "Invalid username or password." });
+    }
+
+    setSessionCookie(req, res, user.username);
+    res.json({ authenticated: true, username: user.username });
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/api/logout", (_req, res) => {
@@ -626,6 +699,18 @@ app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.listen(port, () => {
-  console.log(`IELTS app listening on port ${port}`);
+app.use((error, _req, res, _next) => {
+  console.error(error);
+  res.status(500).json({ error: "Internal server error." });
 });
+
+initializeDatabase()
+  .then(() => {
+    app.listen(port, () => {
+      console.log(`IELTS app listening on port ${port}`);
+    });
+  })
+  .catch((error) => {
+    console.error(`Unable to initialize Postgres login: ${error.message}`);
+    process.exit(1);
+  });

@@ -12,10 +12,17 @@ AI_API_KEY=your_key_here
 AI_MODEL=
 IELTS_HOST_PORT=8091
 METRICS_FILE=/data/metrics.json
+POSTGRES_DB=ielts
+POSTGRES_USER=ielts
+POSTGRES_PASSWORD=change_this_postgres_password
+DATABASE_URL=postgresql://ielts:change_this_postgres_password@postgres:5432/ielts
 AUTH_USERNAME=admin
 AUTH_PASSWORD=change_me
 SESSION_SECRET=replace_with_a_long_random_secret
 ```
+
+`AUTH_USERNAME` and `AUTH_PASSWORD` seed or update the initial login user in
+Postgres on startup. The app stores only a bcrypt password hash.
 
 2. Deploy the app:
 
