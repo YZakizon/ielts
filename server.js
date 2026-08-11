@@ -352,9 +352,23 @@ app.post("/api/translate-sentence", async (req, res) => {
   const targetLabel = translationLanguageLabels[targetLanguage];
   const needsIeltsFeedback = isEnglishLanguage(sourceLanguage);
   const isEnglishTarget = isEnglishLanguage(targetLanguage);
+  const englishTargetRequirements = isEnglishTarget
+    ? `
+For the "translation" field, translate the source into advanced IELTS Band 8-9 ${targetLabel}.
+Requirements for the "translation" field:
+- Use sophisticated and precise vocabulary.
+- Prefer formal or academic wording where appropriate.
+- Use advanced collocations and natural sentence structures.
+- Avoid basic vocabulary when a more refined equivalent is available.
+- Keep the original meaning accurate.
+- Make the sentence concise and elegant.
+- Do not over-explain.
+- Return only the translated sentence inside the "translation" field.
+`
+    : "";
   const targetInstruction =
     isEnglishTarget
-      ? `advanced IELTS-level ${targetLabel} with precise academic vocabulary, cohesive phrasing, and a natural formal tone`
+      ? `advanced IELTS Band 8-9 ${targetLabel}`
       : `natural ${targetLabel}`;
   const translationDescription =
     isEnglishTarget
@@ -363,6 +377,7 @@ app.post("/api/translate-sentence", async (req, res) => {
   const prompt = `
 Translate this sentence or short paragraph from ${sourceLabel} into ${targetInstruction}:
 "${text.replaceAll('"', '\\"')}"
+${englishTargetRequirements}
 
 Return only valid JSON with this shape:
 {
@@ -382,7 +397,7 @@ Return only valid JSON with this shape:
 ${needsIeltsFeedback ? "Because the source language is English, provide concise correction and IELTS learner suggestions." : "Because the source language is not English, leave ieltsFeedback fields empty."}
 Keep the translation faithful to the original meaning. ${
     isEnglishTarget
-      ? `Make the ${targetLabel} suitable for advanced IELTS learners without changing facts, adding unsupported ideas, or making the sentence unnecessarily complex.`
+      ? `Use the Band 8-9 requirements for the ${targetLabel} translation while preserving the source meaning exactly.`
       : `Use natural ${targetLabel}.`
   } Use no markdown and no extra keys.
 `;
