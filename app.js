@@ -693,6 +693,7 @@ const localIndonesianDetails = {
 
 const levelSelect = document.querySelector("#levelSelect");
 const englishVariantSelect = document.querySelector("#englishVariantSelect");
+const vocabTargetLanguageSelect = document.querySelector("#vocabTargetLanguageSelect");
 const generateBtn = document.querySelector("#generateBtn");
 const oneByOneToggle = document.querySelector("#oneByOneToggle");
 const prevWordBtn = document.querySelector("#prevWordBtn");
@@ -728,6 +729,10 @@ const clearSentenceBtn = document.querySelector("#clearSentenceBtn");
 const translationOutput = document.querySelector("#translationOutput");
 const translationStatus = document.querySelector("#translationStatus");
 const translationNotes = document.querySelector("#translationNotes");
+const sourceLanguageSelect = document.querySelector("#sourceLanguageSelect");
+const targetLanguageSelect = document.querySelector("#targetLanguageSelect");
+const sourceLanguageLabel = document.querySelector("#sourceLanguageLabel");
+const targetLanguageLabel = document.querySelector("#targetLanguageLabel");
 
 let currentWords = [];
 let selectedWord = null;
@@ -742,6 +747,19 @@ const defaultVisibleWordCount = 5;
 const englishVariantLabels = {
   us: "US English",
   british: "British English",
+};
+
+const translationLanguageLabels = {
+  auto: "Detect language",
+  english: "English",
+  indonesian: "Bahasa Indonesia",
+  spanish: "Spanish",
+  french: "French",
+  german: "German",
+  arabic: "Arabic",
+  "chinese-simplified": "Chinese Simplified",
+  japanese: "Japanese",
+  korean: "Korean",
 };
 
 function shuffle(items) {
@@ -763,11 +781,11 @@ function withLocalDetails(item) {
     usageTranslation:
       item.usageTranslation ||
       localIndonesianDetails[item.word]?.usageTranslation ||
-      "Terjemahan Bahasa Indonesia belum tersedia untuk penjelasan ini.",
+      "Translation is not available for this explanation yet.",
     exampleTranslation:
       item.exampleTranslation ||
       localIndonesianDetails[item.word]?.exampleTranslation ||
-      "Terjemahan Bahasa Indonesia belum tersedia untuk contoh ini.",
+      "Translation is not available for this example yet.",
   };
 }
 
@@ -833,6 +851,7 @@ function saveAppState(viewName = historyView.classList.contains("hidden") ? "voc
         level: levelSelect.value,
         oneByOne: oneByOneToggle.checked,
         selectedWord: selectedWord?.word || null,
+        targetLanguage: vocabTargetLanguageSelect.value,
         variant: englishVariantSelect.value,
         view: viewName,
       }),
@@ -854,6 +873,9 @@ function loadAppState() {
     }
     if (englishVariantLabels[saved.variant]) {
       englishVariantSelect.value = saved.variant;
+    }
+    if (translationLanguageLabels[saved.targetLanguage]) {
+      vocabTargetLanguageSelect.value = saved.targetLanguage;
     }
 
     oneByOneToggle.checked = Boolean(saved.oneByOne);
@@ -991,7 +1013,7 @@ function extractJson(text) {
   }
 }
 
-async function generateWithAi(level, variant) {
+async function generateWithAi(level, variant, targetLanguage) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
@@ -1000,7 +1022,7 @@ async function generateWithAi(level, variant) {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ level, variant }),
+    body: JSON.stringify({ level, targetLanguage, variant }),
     signal: controller.signal,
   });
   window.clearTimeout(timeoutId);
@@ -1014,7 +1036,7 @@ async function generateWithAi(level, variant) {
   return normalizeGeneratedWords(data.words, level);
 }
 
-async function searchWithAi(query, variant) {
+async function searchWithAi(query, variant, targetLanguage) {
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 15000);
 
@@ -1023,7 +1045,7 @@ async function searchWithAi(query, variant) {
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ query, variant }),
+    body: JSON.stringify({ query, targetLanguage, variant }),
     signal: controller.signal,
   });
   window.clearTimeout(timeoutId);
@@ -1047,10 +1069,10 @@ function normalizeTranslationResult(data, originalText) {
       ? data.keyPhrases
           .slice(0, 6)
           .map((phrase) => ({
-            english: String(phrase.english || "").trim(),
-            indonesian: String(phrase.indonesian || "").trim(),
+            source: String(phrase.source || phrase.english || "").trim(),
+            target: String(phrase.target || phrase.indonesian || "").trim(),
           }))
-          .filter((phrase) => phrase.english && phrase.indonesian)
+          .filter((phrase) => phrase.source && phrase.target)
       : [],
     originalText,
   };
@@ -1060,7 +1082,7 @@ async function translateSentence() {
   const text = sentenceInput.value.trim();
   if (!text) {
     translationStatus.textContent = "Type a sentence first.";
-    translationOutput.textContent = "Terjemahan akan muncul di sini.";
+    translationOutput.textContent = "Translation will appear here.";
     translationOutput.classList.add("empty-result");
     translationNotes.classList.add("hidden");
     return;
@@ -1081,7 +1103,11 @@ async function translateSentence() {
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({
+        sourceLanguage: sourceLanguageSelect.value,
+        targetLanguage: targetLanguageSelect.value,
+        text,
+      }),
       signal: controller.signal,
     });
     window.clearTimeout(timeoutId);
@@ -1106,7 +1132,7 @@ async function translateSentence() {
         ? "Translation took too long."
         : `Translation unavailable. ${error.message.slice(0, 140)}`;
     translationStatus.textContent = message;
-    translationOutput.textContent = "Terjemahan belum tersedia.";
+    translationOutput.textContent = "Translation is not available yet.";
     translationOutput.classList.add("empty-result");
   } finally {
     window.clearTimeout(timeoutId);
@@ -1122,7 +1148,7 @@ function renderTranslationNotes(result) {
         <h2>Key Phrases</h2>
         <ul>
           ${result.keyPhrases
-            .map((phrase) => `<li>${escapeHtml(phrase.english)}: ${escapeHtml(phrase.indonesian)}</li>`)
+            .map((phrase) => `<li>${escapeHtml(phrase.source)}: ${escapeHtml(phrase.target)}</li>`)
             .join("")}
         </ul>
       </section>
@@ -1147,9 +1173,17 @@ function updateSentenceCount() {
   sentenceCount.textContent = `${sentenceInput.value.length} / ${sentenceInput.maxLength}`;
 }
 
+function updateTranslationLanguageLabels() {
+  sourceLanguageLabel.textContent =
+    translationLanguageLabels[sourceLanguageSelect.value] || "Source language";
+  targetLanguageLabel.textContent =
+    translationLanguageLabels[targetLanguageSelect.value] || "Target language";
+}
+
 async function generateWords() {
   const level = levelSelect.value;
   const variant = englishVariantSelect.value;
+  const targetLanguage = vocabTargetLanguageSelect.value;
 
   generateBtn.disabled = true;
   currentWords = fallbackWords(level);
@@ -1161,7 +1195,7 @@ async function generateWords() {
   saveAppState();
 
   try {
-    currentWords = await generateWithAi(level, variant);
+    currentWords = await generateWithAi(level, variant, targetLanguage);
     addGeneratedBatch(currentWords, level, variant);
     setStatus("Generated 20 words.");
     selectedWord = null;
@@ -1187,13 +1221,16 @@ async function generateWords() {
 
 function renderList() {
   const isOneByOne = oneByOneToggle.checked;
-  const visibleWords = oneByOneToggle.checked
+  const visibleWords = isOneByOne
     ? currentWords.slice(currentWordIndex, currentWordIndex + 1)
-    : currentWords.slice(0, defaultVisibleWordCount);
+    : currentWords.slice(currentWordIndex, currentWordIndex + defaultVisibleWordCount);
 
   wordCount.textContent = isOneByOne
     ? `${currentWordIndex + 1} / ${currentWords.length}`
-    : `${visibleWords.length} of ${currentWords.length} words`;
+    : `${currentWords.length ? currentWordIndex + 1 : 0}-${Math.min(
+        currentWordIndex + visibleWords.length,
+        currentWords.length,
+      )} of ${currentWords.length} words`;
 
   vocabList.innerHTML = visibleWords
     .map(
@@ -1205,7 +1242,9 @@ function renderList() {
             <span class="word">${item.word}</span>
             <span class="phonetic">${item.phonetic}</span>
           </span>
-          <span class="level-tag">${labels[levelSelect.value]} · ${englishVariantLabels[englishVariantSelect.value]}</span>
+          <span class="level-tag">${labels[levelSelect.value]} · ${
+            translationLanguageLabels[vocabTargetLanguageSelect.value]
+          }</span>
         </button>
       `,
     )
@@ -1215,10 +1254,17 @@ function renderList() {
 
 function renderStepControls() {
   const isOneByOne = oneByOneToggle.checked;
-  prevWordBtn.disabled = !isOneByOne || currentWordIndex <= 0;
-  nextWordBtn.disabled = !isOneByOne || currentWordIndex >= currentWords.length - 1;
+  const step = isOneByOne ? 1 : defaultVisibleWordCount;
+  const endPosition = isOneByOne
+    ? currentWordIndex + 1
+    : Math.min(currentWordIndex + defaultVisibleWordCount, currentWords.length);
+
+  prevWordBtn.disabled = currentWordIndex <= 0;
+  nextWordBtn.disabled = currentWordIndex + step >= currentWords.length;
   wordPosition.textContent = currentWords.length
-    ? `${currentWordIndex + 1} / ${currentWords.length}`
+    ? isOneByOne
+      ? `${currentWordIndex + 1} / ${currentWords.length}`
+      : `${currentWordIndex + 1}-${endPosition} / ${currentWords.length}`
     : "0 / 0";
 }
 
@@ -1286,7 +1332,7 @@ function renderDetail(item) {
       <h3>How to use</h3>
       <p class="language-label">English</p>
       <p>${item.usage}</p>
-      <p class="language-label">Bahasa Indonesia</p>
+      <p class="language-label">Translation</p>
       <p>${item.usageTranslation}</p>
     </section>
 
@@ -1294,7 +1340,7 @@ function renderDetail(item) {
       <h3>Example</h3>
       <p class="language-label">English</p>
       <p class="example">${item.example}</p>
-      <p class="language-label">Bahasa Indonesia</p>
+      <p class="language-label">Translation</p>
       <p class="example translated-example">${item.exampleTranslation}</p>
     </section>
   `;
@@ -1346,7 +1392,11 @@ async function searchVocabulary() {
     setStatus(`Searching "${rawQuery}" with generation...`);
 
     try {
-      match = await searchWithAi(rawQuery, englishVariantSelect.value);
+      match = await searchWithAi(
+        rawQuery,
+        englishVariantSelect.value,
+        vocabTargetLanguageSelect.value,
+      );
     } catch (error) {
       const message =
         error.name === "AbortError"
@@ -1376,7 +1426,7 @@ function renderEmptyState() {
     <div class="empty-visual" aria-hidden="true">Aa</div>
     <h3>Click one vocabulary item</h3>
     <p>
-      The Bahasa Indonesia translation, synonyms, usage explanation,
+      The translation, synonyms, usage explanation,
       and IELTS-style example will appear here.
     </p>
   `;
@@ -1439,17 +1489,23 @@ oneByOneToggle.addEventListener("change", () => {
   saveAppState();
 });
 prevWordBtn.addEventListener("click", () => {
-  if (!oneByOneToggle.checked || currentWordIndex <= 0) return;
-  currentWordIndex -= 1;
+  if (currentWordIndex <= 0) return;
+  const step = oneByOneToggle.checked ? 1 : defaultVisibleWordCount;
+  currentWordIndex = Math.max(0, currentWordIndex - step);
   renderList();
-  selectWord(currentWords[currentWordIndex], false);
+  if (oneByOneToggle.checked) {
+    selectWord(currentWords[currentWordIndex], false);
+  }
   saveAppState();
 });
 nextWordBtn.addEventListener("click", () => {
-  if (!oneByOneToggle.checked || currentWordIndex >= currentWords.length - 1) return;
-  currentWordIndex += 1;
+  const step = oneByOneToggle.checked ? 1 : defaultVisibleWordCount;
+  if (currentWordIndex + step >= currentWords.length) return;
+  currentWordIndex += step;
   renderList();
-  selectWord(currentWords[currentWordIndex], false);
+  if (oneByOneToggle.checked) {
+    selectWord(currentWords[currentWordIndex], false);
+  }
   saveAppState();
 });
 clearHistoryBtn.addEventListener("click", () => {
@@ -1477,7 +1533,7 @@ searchInput.addEventListener("keydown", (event) => {
 translateSentenceBtn.addEventListener("click", translateSentence);
 clearSentenceBtn.addEventListener("click", () => {
   sentenceInput.value = "";
-  translationOutput.textContent = "Terjemahan akan muncul di sini.";
+  translationOutput.textContent = "Translation will appear here.";
   translationOutput.classList.add("empty-result");
   translationStatus.textContent = "";
   translationNotes.classList.add("hidden");
@@ -1490,8 +1546,11 @@ sentenceInput.addEventListener("keydown", (event) => {
     translateSentence();
   }
 });
+sourceLanguageSelect.addEventListener("change", updateTranslationLanguageLabels);
+targetLanguageSelect.addEventListener("change", updateTranslationLanguageLabels);
 levelSelect.addEventListener("change", generateWords);
 englishVariantSelect.addEventListener("change", generateWords);
+vocabTargetLanguageSelect.addEventListener("change", generateWords);
 
 loadHistory();
 renderHistory();
@@ -1499,4 +1558,5 @@ if (!loadAppState()) {
   generateWords();
 }
 updateSentenceCount();
+updateTranslationLanguageLabels();
 showPage(window.location.hash.replace("#", "") || "home", false);

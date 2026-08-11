@@ -3,8 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IELTS Study Hub</title>
+    <title>IELTS Study Hub | Vocabulary Builder and Multilingual Sentence Translator</title>
+    <meta
+      name="description"
+      content="Practice IELTS vocabulary, review academic word usage, and translate study sentences across multiple languages with IELTS Study Hub."
+    />
+    <meta
+      name="keywords"
+      content="IELTS vocabulary, IELTS sentence translator, IELTS study tool, academic English vocabulary, multilingual translator"
+    />
+    <link rel="canonical" href="https://ielts.appliva.io/" />
+    <meta property="og:title" content="IELTS Study Hub" />
+    <meta
+      property="og:description"
+      content="A multilingual IELTS practice tool for vocabulary building, academic examples, and sentence translation."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://ielts.appliva.io/" />
+    <meta name="twitter:card" content="summary" />
     <link rel="stylesheet" href="styles.css" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "EducationalApplication",
+        "name": "IELTS Study Hub",
+        "applicationCategory": "EducationalApplication",
+        "operatingSystem": "Web",
+        "description": "IELTS Study Hub helps learners practice academic vocabulary and translate sentences across multiple languages for IELTS preparation.",
+        "url": "https://ielts.appliva.io/",
+        "educationalUse": "IELTS preparation",
+        "learningResourceType": "Vocabulary builder and sentence translator"
+      }
+    </script>
   </head>
   <body>
     <header class="site-header">
@@ -23,11 +53,11 @@
       <section id="homePage" class="page-view landing-page" aria-label="IELTS Study Hub homepage">
         <section class="landing-hero">
           <div class="hero-copy">
-            <p class="eyebrow">IELTS English to Bahasa Indonesia</p>
-            <h1>Practice vocabulary and translate sentences in one focused study space.</h1>
+            <p class="eyebrow">Multilingual IELTS practice</p>
+            <h1>IELTS vocabulary builder and sentence translator for every learner.</h1>
             <p>
-              Build IELTS-ready word knowledge, review past vocabulary, and convert
-              full English sentences into natural Bahasa Indonesia for writing and speaking practice.
+              Build IELTS-ready word knowledge, review academic usage, and translate
+              full study sentences across multiple languages for writing, reading, and speaking practice.
             </p>
             <div class="hero-actions">
               <button id="startVocabBtn" type="button">Open Vocab</button>
@@ -37,11 +67,11 @@
           <div class="hero-board" aria-hidden="true">
             <div class="hero-card strong">
               <span>cohesive</span>
-              <small>padu; kohesif</small>
+              <small>unified, connected, integrated</small>
             </div>
             <div class="hero-card">
               <span>Urban planning can reduce congestion.</span>
-              <small>Perencanaan kota dapat mengurangi kemacetan.</small>
+              <small>Translate into your target study language.</small>
             </div>
             <div class="hero-card accent">
               <span>Band 7+ tools</span>
@@ -58,12 +88,40 @@
           </article>
           <article class="feature-card">
             <h2>Sentence Translation</h2>
-            <p>Paste an English sentence and receive natural Bahasa Indonesia with grammar notes and key phrase meaning.</p>
+            <p>Paste a sentence, choose source and target languages, and receive a natural translation with grammar notes.</p>
             <button id="featureTranslationBtn" class="ghost-button" type="button">Open</button>
           </article>
           <article class="feature-card">
             <h2>Writing Support</h2>
             <p>Use academic examples and sentence-level translations to prepare cleaner IELTS Task 1 and Task 2 answers.</p>
+          </article>
+        </section>
+
+        <section class="seo-section" aria-label="IELTS study benefits">
+          <div>
+            <p class="eyebrow">IELTS preparation tools</p>
+            <h2>Study vocabulary, sentence meaning, and academic word usage together.</h2>
+          </div>
+          <p>
+            IELTS Study Hub is built for learners who need practical academic vocabulary
+            practice and fast sentence translation while preparing for IELTS Reading,
+            Writing, Speaking, and Listening. Use the vocabulary builder to learn words
+            by level, then use the sentence translator to compare meaning across languages.
+          </p>
+        </section>
+
+        <section class="faq-grid" aria-label="IELTS Study Hub frequently asked questions">
+          <article class="faq-item">
+            <h2>What can I practice here?</h2>
+            <p>You can practice IELTS vocabulary, review synonyms and examples, search for specific academic words, and translate full study sentences.</p>
+          </article>
+          <article class="faq-item">
+            <h2>Which languages are supported?</h2>
+            <p>The sentence translator includes source language detection and target language options including English, Bahasa Indonesia, Spanish, French, German, Arabic, Chinese, Japanese, and Korean.</p>
+          </article>
+          <article class="faq-item">
+            <h2>Is this only for one country?</h2>
+            <p>No. The app is designed for IELTS learners in any language background who want clearer vocabulary usage and multilingual sentence support.</p>
           </article>
         </section>
       </section>
@@ -72,7 +130,7 @@
         <section class="toolbar" aria-label="Vocabulary controls">
           <div>
             <p class="eyebrow">IELTS Vocabulary</p>
-            <h1>English to Bahasa Indonesia</h1>
+            <h1>Academic vocabulary practice</h1>
           </div>
           <nav class="top-nav" aria-label="Vocabulary navigation">
             <button id="vocabViewBtn" class="nav-button active" type="button">Vocabulary</button>
@@ -90,6 +148,18 @@
           <select id="englishVariantSelect">
             <option value="us">US English</option>
             <option value="british">British English</option>
+          </select>
+          <label for="vocabTargetLanguageSelect">Target</label>
+          <select id="vocabTargetLanguageSelect">
+            <option value="indonesian" selected>Bahasa Indonesia</option>
+            <option value="english">English</option>
+            <option value="spanish">Spanish</option>
+            <option value="french">French</option>
+            <option value="german">German</option>
+            <option value="arabic">Arabic</option>
+            <option value="chinese-simplified">Chinese Simplified</option>
+            <option value="japanese">Japanese</option>
+            <option value="korean">Korean</option>
           </select>
           <button id="generateBtn" type="button">Generate</button>
         </div>
@@ -133,7 +203,7 @@
               <div class="empty-visual" aria-hidden="true">Aa</div>
               <h3>Click one vocabulary item</h3>
               <p>
-                The Bahasa Indonesia translation, synonyms, usage explanation,
+                The translation, synonyms, usage explanation,
                 and IELTS-style example will appear here.
               </p>
             </article>
@@ -165,15 +235,46 @@
         <section class="translator-layout">
           <div class="translator-heading">
             <p class="eyebrow">Sentence Translation</p>
-            <h1>Translate English sentences into Bahasa Indonesia.</h1>
+            <h1>Translate IELTS practice sentences across languages.</h1>
           </div>
           <section class="translator-panel" aria-label="Sentence translator">
+            <div class="language-controls" aria-label="Translation languages">
+              <label>
+                <span>Source language</span>
+                <select id="sourceLanguageSelect">
+                  <option value="auto" selected>Detect language</option>
+                  <option value="english">English</option>
+                  <option value="indonesian">Bahasa Indonesia</option>
+                  <option value="spanish">Spanish</option>
+                  <option value="french">French</option>
+                  <option value="german">German</option>
+                  <option value="arabic">Arabic</option>
+                  <option value="chinese-simplified">Chinese Simplified</option>
+                  <option value="japanese">Japanese</option>
+                  <option value="korean">Korean</option>
+                </select>
+              </label>
+              <label>
+                <span>Target language</span>
+                <select id="targetLanguageSelect">
+                  <option value="english" selected>English</option>
+                  <option value="indonesian">Bahasa Indonesia</option>
+                  <option value="spanish">Spanish</option>
+                  <option value="french">French</option>
+                  <option value="german">German</option>
+                  <option value="arabic">Arabic</option>
+                  <option value="chinese-simplified">Chinese Simplified</option>
+                  <option value="japanese">Japanese</option>
+                  <option value="korean">Korean</option>
+                </select>
+              </label>
+            </div>
             <div class="translation-box">
               <div class="box-header">
-                <label for="sentenceInput">English</label>
+                <label id="sourceLanguageLabel" for="sentenceInput">Detect language</label>
                 <span id="sentenceCount">0 / 800</span>
               </div>
-              <textarea id="sentenceInput" rows="10" maxlength="800" placeholder="Type or paste an English sentence here."></textarea>
+              <textarea id="sentenceInput" rows="10" maxlength="800" placeholder="Type or paste a sentence here."></textarea>
             </div>
             <div class="translation-actions">
               <button id="translateSentenceBtn" type="button">Translate</button>
@@ -181,11 +282,11 @@
             </div>
             <div class="translation-box result-box">
               <div class="box-header">
-                <span>Bahasa Indonesia</span>
+                <span id="targetLanguageLabel">English</span>
                 <span id="translationStatus" role="status"></span>
               </div>
               <div id="translationOutput" class="translation-output empty-result">
-                Terjemahan akan muncul di sini.
+                Translation will appear here.
               </div>
             </div>
             <div id="translationNotes" class="translation-notes hidden"></div>

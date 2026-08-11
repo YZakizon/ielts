@@ -19,6 +19,19 @@ const englishVariantLabels = {
   british: "British English",
 };
 
+const translationLanguageLabels = {
+  auto: "the detected source language",
+  english: "English",
+  indonesian: "Bahasa Indonesia",
+  spanish: "Spanish",
+  french: "French",
+  german: "German",
+  arabic: "Arabic",
+  "chinese-simplified": "Chinese Simplified",
+  japanese: "Japanese",
+  korean: "Korean",
+};
+
 const metrics = loadMetrics();
 
 function todayKey() {
@@ -204,16 +217,22 @@ app.get("/metrics", (_req, res) => {
 });
 
 app.post("/api/vocab", async (req, res) => {
-  const { level, variant } = req.body || {};
+  const { level, targetLanguage = "indonesian", variant } = req.body || {};
 
-  if (!labels[level] || !englishVariantLabels[variant]) {
-    return res.status(400).json({ error: "Invalid level or English variant." });
+  if (
+    !labels[level] ||
+    !englishVariantLabels[variant] ||
+    !translationLanguageLabels[targetLanguage] ||
+    targetLanguage === "auto"
+  ) {
+    return res.status(400).json({ error: "Invalid level, English variant, or target language." });
   }
 
   if (!process.env.AI_API_KEY) {
     return res.status(503).json({ error: "AI_API_KEY is not configured." });
   }
 
+  const targetLabel = translationLanguageLabels[targetLanguage];
   const prompt = `
 Generate exactly 20 random IELTS vocabulary items for the "${labels[level]}" level.
 Use ${englishVariantLabels[variant]} spelling and ${englishVariantLabels[variant]} IPA phonetic symbols.
@@ -223,16 +242,16 @@ Return only valid JSON with this shape:
     {
       "word": "English word",
       "phonetic": "/IPA symbols/",
-      "translation": "Bahasa Indonesia translation",
+      "translation": "${targetLabel} translation",
       "synonyms": ["synonym 1", "synonym 2", "synonym 3"],
       "usage": "Clear explanation in English about how to use the word.",
-      "usageTranslation": "Bahasa Indonesia translation of the usage explanation.",
+      "usageTranslation": "${targetLabel} translation of the usage explanation.",
       "example": "IELTS-style example sentence in English.",
-      "exampleTranslation": "Bahasa Indonesia translation of the example sentence."
+      "exampleTranslation": "${targetLabel} translation of the example sentence."
     }
   ]
 }
-Use academic IELTS vocabulary, natural Bahasa Indonesia translations, and no markdown.
+Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markdown.
 `;
 
   try {
@@ -251,21 +270,22 @@ Use academic IELTS vocabulary, natural Bahasa Indonesia translations, and no mar
 });
 
 app.post("/api/search-vocab", async (req, res) => {
-  const { query, variant } = req.body || {};
+  const { query, targetLanguage = "indonesian", variant } = req.body || {};
   const word = String(query || "").trim();
 
   if (!word) {
     return res.status(400).json({ error: "Search word is required." });
   }
 
-  if (!englishVariantLabels[variant]) {
-    return res.status(400).json({ error: "Invalid English variant." });
+  if (!englishVariantLabels[variant] || !translationLanguageLabels[targetLanguage] || targetLanguage === "auto") {
+    return res.status(400).json({ error: "Invalid English variant or target language." });
   }
 
   if (!process.env.AI_API_KEY) {
     return res.status(503).json({ error: "AI_API_KEY is not configured." });
   }
 
+  const targetLabel = translationLanguageLabels[targetLanguage];
   const prompt = `
 Create one IELTS vocabulary entry for "${word}".
 Use ${englishVariantLabels[variant]} spelling and ${englishVariantLabels[variant]} IPA phonetic symbols.
@@ -274,14 +294,14 @@ Return only valid JSON with this shape:
 {
   "word": "English word",
   "phonetic": "/IPA symbols/",
-  "translation": "Bahasa Indonesia translation",
+  "translation": "${targetLabel} translation",
   "synonyms": ["synonym 1", "synonym 2", "synonym 3"],
   "usage": "Clear explanation in English about how to use the word.",
-  "usageTranslation": "Bahasa Indonesia translation of the usage explanation.",
+  "usageTranslation": "${targetLabel} translation of the usage explanation.",
   "example": "IELTS-style example sentence in English.",
-  "exampleTranslation": "Bahasa Indonesia translation of the example sentence."
+  "exampleTranslation": "${targetLabel} translation of the example sentence."
 }
-Use natural Bahasa Indonesia translations and no markdown.
+Use natural ${targetLabel} translations and no markdown.
 `;
 
   try {
@@ -298,6 +318,8 @@ Use natural Bahasa Indonesia translations and no markdown.
 
 app.post("/api/translate-sentence", async (req, res) => {
   const text = String(req.body?.text || "").trim();
+  const sourceLanguage = String(req.body?.sourceLanguage || "auto");
+  const targetLanguage = String(req.body?.targetLanguage || "english");
 
   if (!text) {
     return res.status(400).json({ error: "Sentence text is required." });
@@ -307,25 +329,35 @@ app.post("/api/translate-sentence", async (req, res) => {
     return res.status(400).json({ error: "Sentence text must be 800 characters or fewer." });
   }
 
+  if (!translationLanguageLabels[sourceLanguage] || !translationLanguageLabels[targetLanguage]) {
+    return res.status(400).json({ error: "Invalid source or target language." });
+  }
+
+  if (targetLanguage === "auto") {
+    return res.status(400).json({ error: "Target language must be selected." });
+  }
+
   if (!process.env.AI_API_KEY) {
     return res.status(503).json({ error: "AI_API_KEY is not configured." });
   }
 
+  const sourceLabel = translationLanguageLabels[sourceLanguage];
+  const targetLabel = translationLanguageLabels[targetLanguage];
   const prompt = `
-Translate this English sentence or short paragraph into natural Bahasa Indonesia:
+Translate this sentence or short paragraph from ${sourceLabel} into natural ${targetLabel}:
 "${text.replaceAll('"', '\\"')}"
 
 Return only valid JSON with this shape:
 {
-  "translation": "Natural Bahasa Indonesia translation",
+  "translation": "Natural ${targetLabel} translation",
   "keyPhrases": [
-    { "english": "important English phrase", "indonesian": "Bahasa Indonesia meaning" }
+    { "source": "important source phrase", "target": "meaning in ${targetLabel}" }
   ],
   "notes": [
-    "Short grammar or word-choice note for Indonesian IELTS learners"
+    "Short grammar or word-choice note for IELTS learners"
   ]
 }
-Keep the translation faithful to the original meaning. Use natural Bahasa Indonesia, no markdown, and no extra keys.
+Keep the translation faithful to the original meaning. Use natural ${targetLabel}, no markdown, and no extra keys.
 `;
 
   try {

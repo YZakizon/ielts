@@ -248,14 +248,58 @@ h2 {
   line-height: 1.6;
 }
 
+.seo-section {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.75fr) minmax(300px, 1fr);
+  gap: 24px;
+  padding: 26px 0 6px;
+  border-top: 1px solid var(--line);
+}
+
+.seo-section h2 {
+  font-size: clamp(1.6rem, 3vw, 2.5rem);
+  line-height: 1.15;
+}
+
+.seo-section p {
+  margin-bottom: 0;
+  color: var(--muted);
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+
+.faq-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.faq-item {
+  padding: 20px 0;
+  border-top: 1px solid var(--line);
+}
+
+.faq-item h2 {
+  margin-bottom: 10px;
+}
+
+.faq-item p {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.65;
+}
+
 .controls {
   display: grid;
   grid-template-columns:
-    auto minmax(130px, 170px)
-    auto minmax(150px, 190px)
+    auto minmax(112px, 135px)
+    auto minmax(128px, 155px)
+    auto minmax(128px, 155px)
     auto;
   align-items: center;
-  gap: 10px;
+  column-gap: 6px;
+  row-gap: 10px;
+  justify-content: start;
 }
 
 .controls label,
@@ -667,6 +711,21 @@ button:hover {
   box-shadow: var(--shadow);
 }
 
+.language-controls {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: repeat(2, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.language-controls label {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 850;
+}
+
 .translation-box {
   display: grid;
   grid-template-rows: auto 1fr;
@@ -756,6 +815,8 @@ button:hover {
   .study-grid,
   .landing-hero,
   .feature-grid,
+  .seo-section,
+  .faq-grid,
   .translator-panel {
     grid-template-columns: 1fr;
   }
@@ -799,6 +860,10 @@ button:hover {
 
   .translation-actions {
     display: flex;
+  }
+
+  .language-controls {
+    grid-template-columns: 1fr;
   }
 
   .study-grid {
