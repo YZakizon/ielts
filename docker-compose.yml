@@ -21,7 +21,7 @@ services:
       - "traefik.environment=dev"
       - "traefik.http.routers.ielts.rule=Host(`ielts.localhost`)"
       - "traefik.http.routers.ielts.entrypoints=web"
-      - "traefik.http.services.ielts.loadbalancer.server.port=80"
+      - "traefik.http.services.ielts.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-proxy"
     networks:
       - traefik-proxy
