@@ -269,6 +269,10 @@ function isAdminEmail(email) {
   return adminEmails.has(normalizeEmail(email));
 }
 
+function isAdminUser(user) {
+  return Boolean(user?.email_verified_at && isAdminEmail(user.email));
+}
+
 function validateAccountInput(email, password) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return "Enter a valid email address.";
@@ -823,7 +827,7 @@ app.get("/api/session", async (req, res, next) => {
       authenticated: Boolean(user),
       configured: authConfigured(),
       email: user?.email || null,
-      isAdmin: Boolean(user && isAdminEmail(user.email)),
+      isAdmin: isAdminUser(user),
       quota: quotaPayload(usage),
     });
   } catch (error) {
@@ -873,7 +877,7 @@ app.post("/api/signup", async (req, res, next) => {
     res.status(201).json({
       authenticated: true,
       email,
-      isAdmin: isAdminEmail(email),
+      isAdmin: false,
       verificationEmailSent: emailSent,
     });
   } catch (error) {
@@ -959,7 +963,7 @@ app.post("/api/login", async (req, res, next) => {
 
     clearLoginRateLimit(loginKey);
     setSessionCookie(req, res, user.email);
-    res.json({ authenticated: true, email: user.email, isAdmin: isAdminEmail(user.email) });
+    res.json({ authenticated: true, email: user.email, isAdmin: isAdminUser(user) });
   } catch (error) {
     next(error);
   }
