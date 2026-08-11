@@ -752,7 +752,9 @@ const englishVariantLabels = {
 
 const translationLanguageLabels = {
   auto: "Detect language",
-  english: "English",
+  english: "English (US)",
+  "english-uk": "English (UK)",
+  "english-au": "English (AU)",
   "english-australia": "English Australia",
   indonesian: "Bahasa Indonesia",
   spanish: "Spanish",
@@ -1159,7 +1161,7 @@ async function translateSentence() {
 function renderIeltsFeedback(result) {
   const feedback = result.ieltsFeedback;
   const shouldShow =
-    sourceLanguageSelect.value === "english" &&
+    ["english", "english-uk", "english-au"].includes(sourceLanguageSelect.value) &&
     (feedback.correctedSentence || feedback.corrections.length || feedback.suggestions.length);
 
   if (!shouldShow) {

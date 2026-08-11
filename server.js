@@ -21,7 +21,9 @@ const englishVariantLabels = {
 
 const translationLanguageLabels = {
   auto: "the detected source language",
-  english: "English",
+  english: "English (US)",
+  "english-uk": "English (UK)",
+  "english-au": "English (AU)",
   "english-australia": "Australian English",
   indonesian: "Bahasa Indonesia",
   spanish: "Spanish",
@@ -32,6 +34,10 @@ const translationLanguageLabels = {
   japanese: "Japanese",
   korean: "Korean",
 };
+
+function isEnglishLanguage(language) {
+  return ["english", "english-uk", "english-au", "english-australia"].includes(language);
+}
 
 const metrics = loadMetrics();
 
@@ -344,8 +350,8 @@ app.post("/api/translate-sentence", async (req, res) => {
 
   const sourceLabel = translationLanguageLabels[sourceLanguage];
   const targetLabel = translationLanguageLabels[targetLanguage];
-  const needsIeltsFeedback = sourceLanguage === "english";
-  const isEnglishTarget = targetLanguage === "english" || targetLanguage === "english-australia";
+  const needsIeltsFeedback = isEnglishLanguage(sourceLanguage);
+  const isEnglishTarget = isEnglishLanguage(targetLanguage);
   const targetInstruction =
     isEnglishTarget
       ? `advanced IELTS-level ${targetLabel} with precise academic vocabulary, cohesive phrasing, and a natural formal tone`
