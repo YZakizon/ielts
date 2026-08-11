@@ -2,6 +2,7 @@ const express = require("express");
 const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("crypto");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
+const nodemailer = require("nodemailer");
 const path = require("path");
 const { Pool } = require("pg");
 require("dotenv").config();
@@ -9,23 +10,36 @@ require("dotenv").config();
 const app = express();
 const port = process.env.PORT || 8080;
 const metricsFile = process.env.METRICS_FILE || "/data/metrics.json";
+const metricsToken = process.env.METRICS_TOKEN || process.env.METRICS_API_KEY || "";
 const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
-const aiRateLimitWindowMs = Number(process.env.AI_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
-const aiRateLimitMax = Number(process.env.AI_RATE_LIMIT_MAX || 20);
+const freeAccountLimitPerMinute = Number(process.env.FREE_ACCOUNT_LIMIT_PER_MINUTE || 2);
+const freeAccountLimitPerHour = Number(process.env.FREE_ACCOUNT_LIMIT_PER_HOUR || 20);
+const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 50);
 const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
 const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const freeSessionLimit = Number(process.env.FREE_SESSION_LIMIT || 5);
+const freeVocabGenerationLimit = Number(process.env.FREE_VOCAB_GENERATION_LIMIT || 2);
 const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
 const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const aiRateLimitBuckets = new Map();
 const loginRateLimitBuckets = new Map();
-const authUsername = process.env.AUTH_USERNAME || "";
-const authPassword = process.env.AUTH_PASSWORD || "";
+const adminEmails = new Set(
+  String(process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((email) => normalizeEmail(email))
+    .filter(Boolean),
+);
 const databaseUrl = process.env.DATABASE_URL || "";
 const sessionSecret = process.env.SESSION_SECRET || "";
 const sessionCookieName = "ielts_session";
+const guestCookieName = "ielts_guest_id";
 const sessionDurationMs = Number(process.env.SESSION_DURATION_MS || 12 * 60 * 60 * 1000);
+const smtpHost = process.env.SMTP_HOST || "";
+const smtpPort = Number(process.env.SMTP_PORT || 587);
+const smtpUser = process.env.SMTP_USER || "";
+const smtpPassword = process.env.SMTP_PASSWORD || "";
+const smtpFrom = process.env.SMTP_FROM || smtpUser;
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
 
 app.set("trust proxy", "loopback");
@@ -139,10 +153,50 @@ function signSession(value) {
   return createHmac("sha256", sessionSecret).update(value).digest("base64url");
 }
 
-function createSessionToken(username) {
+function hashToken(token) {
+  return createHmac("sha256", sessionSecret).update(token).digest("hex");
+}
+
+function publicBaseUrl(req) {
+  const proto = req.headers["x-forwarded-proto"] || (isSecureRequest(req) ? "https" : "http");
+  return `${proto}://${req.headers.host}`;
+}
+
+function smtpConfigured() {
+  return Boolean(smtpHost && smtpFrom);
+}
+
+async function sendVerificationEmail(email, verificationUrl) {
+  if (!smtpConfigured()) {
+    console.warn(`SMTP is not configured. Email verification link for ${email}: ${verificationUrl}`);
+    return false;
+  }
+
+  const transporter = nodemailer.createTransport({
+    auth: smtpUser || smtpPassword ? { user: smtpUser, pass: smtpPassword } : undefined,
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+  });
+
+  await transporter.sendMail({
+    from: smtpFrom,
+    to: email,
+    subject: "Verify your IELTS Study Hub email",
+    text: `Verify your email address by opening this link:\n\n${verificationUrl}\n\nThis link expires in 24 hours.`,
+    html: `
+      <p>Verify your email address by opening this link:</p>
+      <p><a href="${verificationUrl}">Verify email</a></p>
+      <p>This link expires in 24 hours.</p>
+    `,
+  });
+  return true;
+}
+
+function createSessionToken(email) {
   const expiresAt = Date.now() + sessionDurationMs;
   const nonce = randomBytes(16).toString("base64url");
-  const payload = Buffer.from(JSON.stringify({ expiresAt, nonce, username })).toString("base64url");
+  const payload = Buffer.from(JSON.stringify({ email, expiresAt, nonce })).toString("base64url");
   return `${payload}.${signSession(payload)}`;
 }
 
@@ -150,6 +204,26 @@ function sameValue(left, right) {
   const leftBuffer = Buffer.from(String(left));
   const rightBuffer = Buffer.from(String(right));
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function readBearerToken(req) {
+  const authorization = String(req.headers.authorization || "");
+  const [scheme, token] = authorization.split(/\s+/, 2);
+  return scheme?.toLowerCase() === "bearer" ? token || "" : "";
+}
+
+function requireMetricsToken(req, res, next) {
+  if (!metricsToken) {
+    return res.status(503).json({ error: "Metrics access is not configured. Set METRICS_TOKEN." });
+  }
+
+  const providedToken = String(req.headers["x-metrics-token"] || req.headers["x-api-key"] || readBearerToken(req));
+  if (!sameValue(providedToken, metricsToken)) {
+    res.set("WWW-Authenticate", 'Bearer realm="metrics"');
+    return res.status(401).json({ error: "Metrics token required." });
+  }
+
+  next();
 }
 
 function readSession(req) {
@@ -165,7 +239,7 @@ function readSession(req) {
 
   try {
     const session = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
-    if (!session.username || Number(session.expiresAt) < Date.now()) {
+    if (!session.email || Number(session.expiresAt) < Date.now()) {
       return null;
     }
     return session;
@@ -174,8 +248,8 @@ function readSession(req) {
   }
 }
 
-function setSessionCookie(req, res, username) {
-  res.cookie(sessionCookieName, createSessionToken(username), {
+function setSessionCookie(req, res, email) {
+  res.cookie(sessionCookieName, createSessionToken(email), {
     httpOnly: true,
     maxAge: sessionDurationMs,
     sameSite: "lax",
@@ -187,16 +261,57 @@ function clearSessionCookie(res) {
   res.clearCookie(sessionCookieName, { sameSite: "lax" });
 }
 
-async function findActiveUser(username) {
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function isAdminEmail(email) {
+  return adminEmails.has(normalizeEmail(email));
+}
+
+function validateAccountInput(email, password) {
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return "Enter a valid email address.";
+  }
+  if (String(password || "").length < 8) {
+    return "Password must be at least 8 characters.";
+  }
+  return "";
+}
+
+function ensureGuestId(req, res) {
+  const cookies = parseCookies(req.headers.cookie);
+  const guestId = uuidPattern.test(cookies[guestCookieName] || "")
+    ? cookies[guestCookieName]
+    : randomUUID();
+
+  if (cookies[guestCookieName] !== guestId) {
+    res.cookie(guestCookieName, guestId, {
+      httpOnly: true,
+      maxAge: 365 * 24 * 60 * 60 * 1000,
+      sameSite: "lax",
+      secure: isSecureRequest(req),
+    });
+  }
+
+  return guestId;
+}
+
+async function findActiveUser(email) {
   if (!dbPool) {
     return null;
   }
 
   const result = await dbPool.query(
-    "SELECT id, username, password_hash FROM app_users WHERE username = $1 AND is_active = true LIMIT 1",
-    [username],
+    "SELECT id, email, password_hash, email_verified_at FROM app_users WHERE email = $1 AND is_active = true LIMIT 1",
+    [normalizeEmail(email)],
   );
   return result.rows[0] || null;
+}
+
+async function readUserFromSession(req) {
+  const session = readSession(req);
+  return session ? findActiveUser(session.email) : null;
 }
 
 async function requireAuth(req, res, next) {
@@ -210,13 +325,13 @@ async function requireAuth(req, res, next) {
   }
 
   try {
-    const user = await findActiveUser(session.username);
+    const user = await findActiveUser(session.email);
     if (!user) {
       return res.status(401).json({ error: "Login required." });
     }
 
     req.session = session;
-    req.user = { id: user.id, username: user.username };
+    req.user = { email: user.email, id: user.id };
     next();
   } catch (error) {
     next(error);
@@ -289,31 +404,159 @@ async function initializeDatabase() {
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS app_users (
       id bigserial PRIMARY KEY,
-      username text UNIQUE NOT NULL,
+      email text UNIQUE NOT NULL,
       password_hash text NOT NULL,
       is_active boolean NOT NULL DEFAULT true,
+      email_verified_at timestamptz,
+      email_verification_token_hash text,
+      email_verification_expires_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
 
-  if (authUsername && authPassword) {
-    const passwordHash = await bcrypt.hash(authPassword, 12);
-    await dbPool.query(
-      `
-        INSERT INTO app_users (username, password_hash, is_active, updated_at)
-        VALUES ($1, $2, true, now())
-        ON CONFLICT (username) DO UPDATE SET
-          password_hash = EXCLUDED.password_hash,
-          is_active = true,
-          updated_at = now()
-      `,
-      [authUsername, passwordHash],
-    );
-    console.log(`Seeded login user "${authUsername}" in Postgres.`);
-  } else {
-    console.warn("AUTH_USERNAME and AUTH_PASSWORD are not set; no login user was seeded.");
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'app_users' AND column_name = 'username'
+      ) AND NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'app_users' AND column_name = 'email'
+      ) THEN
+        ALTER TABLE app_users RENAME COLUMN username TO email;
+      END IF;
+    END $$;
+  `);
+
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verified_at timestamptz");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_token_hash text");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz");
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS guest_usage (
+      guest_id uuid PRIMARY KEY,
+      translation_sessions integer NOT NULL DEFAULT 0,
+      vocab_generations integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS free_account_usage_events (
+      id bigserial PRIMARY KEY,
+      user_id bigint NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+      endpoint text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS free_account_usage_events_user_created_idx
+    ON free_account_usage_events (user_id, created_at DESC)
+  `);
+
+  console.log("Login database initialized.");
+}
+
+async function getGuestUsage(guestId) {
+  const result = await dbPool.query(
+    `
+      INSERT INTO guest_usage (guest_id)
+      VALUES ($1)
+      ON CONFLICT (guest_id) DO UPDATE SET updated_at = guest_usage.updated_at
+      RETURNING translation_sessions, vocab_generations
+    `,
+    [guestId],
+  );
+  return result.rows[0];
+}
+
+function quotaPayload(usage = {}) {
+  const translationSessions = Number(usage.translation_sessions || 0);
+  const vocabGenerations = Number(usage.vocab_generations || 0);
+  return {
+    freeSessionLimit,
+    freeSessionsRemaining: Math.max(freeSessionLimit - translationSessions, 0),
+    freeVocabGenerationLimit,
+    freeVocabGenerationsRemaining: Math.max(freeVocabGenerationLimit - vocabGenerations, 0),
+  };
+}
+
+async function consumeGuestQuota(req, res, quotaType) {
+  const guestId = ensureGuestId(req, res);
+  const column = quotaType === "vocab" ? "vocab_generations" : "translation_sessions";
+  const limit = quotaType === "vocab" ? freeVocabGenerationLimit : freeSessionLimit;
+  const result = await dbPool.query(
+    `
+      INSERT INTO guest_usage (guest_id, ${column})
+      VALUES ($1, 1)
+      ON CONFLICT (guest_id) DO UPDATE SET
+        ${column} = guest_usage.${column} + 1,
+        updated_at = now()
+      WHERE guest_usage.${column} < $2
+      RETURNING translation_sessions, vocab_generations
+    `,
+    [guestId, limit],
+  );
+
+  return {
+    allowed: Boolean(result.rows[0]),
+    usage: result.rows[0] || (await getGuestUsage(guestId)),
+  };
+}
+
+function sendQuotaExceeded(res, usage) {
+  return res.status(402).json({
+    error: "Free limit reached. Create an account or login to continue.",
+    code: "free_limit_reached",
+    ...quotaPayload(usage),
+  });
+}
+
+function allowAuthenticatedOrGuestQuota(quotaType) {
+  return async (req, res, next) => {
+    if (!authConfigured()) {
+      return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+    }
+
+    try {
+      const user = await readUserFromSession(req);
+      if (user) {
+        req.user = { email: user.email, id: user.id };
+        return next();
+      }
+
+      const guestId = ensureGuestId(req, res);
+      const usage = await getGuestUsage(guestId);
+      const payload = quotaPayload(usage);
+      const remaining =
+        quotaType === "vocab"
+          ? payload.freeVocabGenerationsRemaining
+          : payload.freeSessionsRemaining;
+      if (remaining <= 0) {
+        return sendQuotaExceeded(res, usage);
+      }
+
+      req.guestQuotaType = quotaType;
+      next();
+    } catch (error) {
+      next(error);
+    }
+  };
+}
+
+async function recordGuestQuota(req, res) {
+  if (!req.guestQuotaType || req.user) {
+    return;
   }
+
+  const { usage } = await consumeGuestQuota(req, res, req.guestQuotaType);
+  const payload = quotaPayload(usage);
+  res.set("X-Free-Sessions-Remaining", String(payload.freeSessionsRemaining));
+  res.set("X-Free-Vocab-Generations-Remaining", String(payload.freeVocabGenerationsRemaining));
 }
 
 function metricLine(name, value, labels = {}) {
@@ -417,40 +660,98 @@ async function fetchWithTimeout(url, options) {
   }
 }
 
-function aiRateLimit(req, res, next) {
-  const originalPath = req.originalUrl.split("?")[0];
-  const now = Date.now();
-  if (aiRateLimitBuckets.size > 10000) {
-    for (const [bucketKey, bucket] of aiRateLimitBuckets.entries()) {
-      if (now >= bucket.resetAt) {
-        aiRateLimitBuckets.delete(bucketKey);
-      }
-    }
-  }
-
-  const key = `${req.ip || req.socket.remoteAddress || "unknown"}:${originalPath}`;
-  const bucket = aiRateLimitBuckets.get(key);
-
-  if (!bucket || now >= bucket.resetAt) {
-    aiRateLimitBuckets.set(key, { count: 1, resetAt: now + aiRateLimitWindowMs });
-    next();
-    return;
-  }
-
-  if (bucket.count >= aiRateLimitMax) {
-    res.set("Retry-After", String(Math.ceil((bucket.resetAt - now) / 1000)));
-    return res.status(429).json({ error: "Too many AI requests. Please try again later." });
-  }
-
-  bucket.count += 1;
-  res.set("X-RateLimit-Remaining", String(Math.max(aiRateLimitMax - bucket.count, 0)));
-  next();
+function freeAccountLimitPayload(counts = {}) {
+  const minuteUsed = Number(counts.minute_count || 0);
+  const hourUsed = Number(counts.hour_count || 0);
+  const dayUsed = Number(counts.day_count || 0);
+  return {
+    freeAccountLimitPerMinute,
+    freeAccountLimitPerHour,
+    freeAccountLimitPerDay,
+    freeAccountMinuteRemaining: Math.max(freeAccountLimitPerMinute - minuteUsed, 0),
+    freeAccountHourRemaining: Math.max(freeAccountLimitPerHour - hourUsed, 0),
+    freeAccountDayRemaining: Math.max(freeAccountLimitPerDay - dayUsed, 0),
+  };
 }
 
-function loginRateLimitKey(req, username) {
+function sendFreeAccountLimitExceeded(res, counts) {
+  const payload = freeAccountLimitPayload(counts);
+  const retryAfter =
+    payload.freeAccountMinuteRemaining <= 0
+      ? 60
+      : payload.freeAccountHourRemaining <= 0
+        ? 60 * 60
+        : 24 * 60 * 60;
+  res.set("Retry-After", String(retryAfter));
+  return res.status(429).json({
+    error: "Free account limit reached. Please try again later.",
+    code: "free_account_limit_reached",
+    ...payload,
+  });
+}
+
+async function consumeFreeAccountLimit(userId, endpoint) {
+  await dbPool.query("DELETE FROM free_account_usage_events WHERE created_at < now() - interval '2 days'");
+  const result = await dbPool.query(
+    `
+      WITH locked AS (
+        SELECT pg_advisory_xact_lock($1::bigint)
+      ),
+      usage AS (
+        SELECT
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 minute') AS minute_count,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 hour') AS hour_count,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day') AS day_count
+        FROM free_account_usage_events, locked
+        WHERE user_id = $1
+          AND created_at >= now() - interval '1 day'
+      ),
+      inserted AS (
+        INSERT INTO free_account_usage_events (user_id, endpoint)
+        SELECT $1, $5
+        WHERE (SELECT minute_count FROM usage) < $2
+          AND (SELECT hour_count FROM usage) < $3
+          AND (SELECT day_count FROM usage) < $4
+        RETURNING 1
+      )
+      SELECT
+        usage.minute_count,
+        usage.hour_count,
+        usage.day_count,
+        EXISTS(SELECT 1 FROM inserted) AS allowed
+      FROM usage
+    `,
+    [userId, freeAccountLimitPerMinute, freeAccountLimitPerHour, freeAccountLimitPerDay, endpoint],
+  );
+  return result.rows[0] || { allowed: false, minute_count: 0, hour_count: 0, day_count: 0 };
+}
+
+async function enforceFreeAccountRateLimit(req, res) {
+  if (!req.user) {
+    return true;
+  }
+
+  const usage = await consumeFreeAccountLimit(req.user.id, req.originalUrl.split("?")[0]);
+  if (!usage.allowed) {
+    sendFreeAccountLimitExceeded(res, usage);
+    return false;
+  }
+
+  const payload = freeAccountLimitPayload({
+    minute_count: Number(usage.minute_count || 0) + 1,
+    hour_count: Number(usage.hour_count || 0) + 1,
+    day_count: Number(usage.day_count || 0) + 1,
+  });
+  res.set("X-Free-Account-Minute-Remaining", String(payload.freeAccountMinuteRemaining));
+  res.set("X-Free-Account-Hour-Remaining", String(payload.freeAccountHourRemaining));
+  res.set("X-Free-Account-Day-Remaining", String(payload.freeAccountDayRemaining));
+  return true;
+}
+
+function loginRateLimitKey(req, email) {
   const ip = req.ip || req.socket.remoteAddress || "unknown";
-  const normalizedUsername = String(username || "").trim().toLowerCase().slice(0, 128) || "empty";
-  return `${ip}:${normalizedUsername}`;
+  const normalizedEmail = String(email || "").trim().toLowerCase().slice(0, 254) || "empty";
+  return `${ip}:${normalizedEmail}`;
 }
 
 function pruneLoginRateLimitBuckets(now) {
@@ -515,13 +816,119 @@ function sendLoginLockout(res, bucket) {
 app.use(express.json({ limit: "32kb" }));
 app.get("/api/session", async (req, res, next) => {
   try {
-    const session = readSession(req);
-    const user = session ? await findActiveUser(session.username) : null;
+    const user = await readUserFromSession(req);
+    const guestId = ensureGuestId(req, res);
+    const usage = dbPool ? await getGuestUsage(guestId) : {};
     res.json({
       authenticated: Boolean(user),
       configured: authConfigured(),
-      username: user?.username || null,
+      email: user?.email || null,
+      isAdmin: Boolean(user && isAdminEmail(user.email)),
+      quota: quotaPayload(usage),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/signup", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || "");
+  const validationError = validateAccountInput(email, password);
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  try {
+    const passwordHash = await bcrypt.hash(password, 12);
+    const verificationToken = randomBytes(32).toString("base64url");
+    const verificationTokenHash = hashToken(verificationToken);
+    const result = await dbPool.query(
+      `
+        INSERT INTO app_users (
+          email,
+          password_hash,
+          email_verification_token_hash,
+          email_verification_expires_at
+        )
+        VALUES ($1, $2, $3, now() + interval '24 hours')
+        ON CONFLICT (email) DO NOTHING
+        RETURNING email
+      `,
+      [email, passwordHash, verificationTokenHash],
+    );
+
+    if (!result.rows[0]) {
+      return res.status(409).json({ error: "Email is already registered." });
+    }
+
+    const verificationUrl = `${publicBaseUrl(req)}/api/verify-email?token=${encodeURIComponent(verificationToken)}`;
+    const emailSent = await sendVerificationEmail(email, verificationUrl);
+
+    setSessionCookie(req, res, email);
+    res.status(201).json({
+      authenticated: true,
+      email,
+      isAdmin: isAdminEmail(email),
+      verificationEmailSent: emailSent,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/verify-email", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).send("Login is not configured.");
+  }
+
+  const token = String(req.query.token || "");
+  if (!token) {
+    return res.status(400).send("Verification token is required.");
+  }
+
+  try {
+    const result = await dbPool.query(
+      `
+        UPDATE app_users
+        SET
+          email_verified_at = now(),
+          email_verification_token_hash = null,
+          email_verification_expires_at = null,
+          updated_at = now()
+        WHERE
+          email_verification_token_hash = $1
+          AND email_verification_expires_at > now()
+        RETURNING email
+      `,
+      [hashToken(token)],
+    );
+
+    if (!result.rows[0]) {
+      return res.status(400).send("Verification link is invalid or expired.");
+    }
+
+    res.type("html").send(`
+      <!doctype html>
+      <html lang="en">
+        <head>
+          <meta charset="UTF-8" />
+          <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+          <title>Email verified</title>
+        </head>
+        <body>
+          <main style="font-family: system-ui, sans-serif; max-width: 520px; margin: 80px auto; line-height: 1.5;">
+            <h1>Email verified</h1>
+            <p>Your email has been verified. You can return to IELTS Study Hub.</p>
+            <p><a href="/">Open IELTS Study Hub</a></p>
+          </main>
+        </body>
+      </html>
+    `);
   } catch (error) {
     next(error);
   }
@@ -532,27 +939,27 @@ app.post("/api/login", async (req, res, next) => {
     return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
   }
 
-  const username = String(req.body?.username || "");
+  const email = normalizeEmail(req.body?.email);
   const password = String(req.body?.password || "");
-  const loginKey = loginRateLimitKey(req, username);
+  const loginKey = loginRateLimitKey(req, email);
   const activeLockout = getActiveLoginLockout(loginKey);
   if (activeLockout) {
     return sendLoginLockout(res, activeLockout);
   }
 
   try {
-    const user = await findActiveUser(username);
+    const user = await findActiveUser(email);
     if (!user || !(await bcrypt.compare(password, user.password_hash))) {
       const failedBucket = recordFailedLogin(loginKey);
       if (failedBucket.lockedUntil && Date.now() < failedBucket.lockedUntil) {
         return sendLoginLockout(res, failedBucket);
       }
-      return res.status(401).json({ error: "Invalid username or password." });
+      return res.status(401).json({ error: "Invalid email or password." });
     }
 
     clearLoginRateLimit(loginKey);
-    setSessionCookie(req, res, user.username);
-    res.json({ authenticated: true, username: user.username });
+    setSessionCookie(req, res, user.email);
+    res.json({ authenticated: true, email: user.email, isAdmin: isAdminEmail(user.email) });
   } catch (error) {
     next(error);
   }
@@ -563,12 +970,9 @@ app.post("/api/logout", (_req, res) => {
   res.json({ authenticated: false });
 });
 
-app.use("/api/vocab", requireAuth);
-app.use("/api/search-vocab", requireAuth);
-app.use("/api/translate-sentence", requireAuth);
-app.use("/api/vocab", aiRateLimit);
-app.use("/api/search-vocab", aiRateLimit);
-app.use("/api/translate-sentence", aiRateLimit);
+app.use("/api/vocab", allowAuthenticatedOrGuestQuota("vocab"));
+app.use("/api/search-vocab", allowAuthenticatedOrGuestQuota("vocab"));
+app.use("/api/translate-sentence", allowAuthenticatedOrGuestQuota("session"));
 app.use((req, res, next) => {
   if (req.path !== "/metrics") {
     recordUniqueUser(req, res);
@@ -584,7 +988,7 @@ app.get(["/app.js", "/styles.css"], (req, res) => {
   res.sendFile(path.join(__dirname, req.path));
 });
 
-app.get("/metrics", (_req, res) => {
+app.get("/metrics", requireMetricsToken, (_req, res) => {
   res.type("text/plain; version=0.0.4; charset=utf-8").send(renderMetrics());
 });
 
@@ -627,6 +1031,10 @@ Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markd
 `;
 
   try {
+    if (!(await enforceFreeAccountRateLimit(req, res))) {
+      return;
+    }
+
     const generated = await fetchGeneratedJson(prompt);
 
     if (!Array.isArray(generated.words)) {
@@ -634,6 +1042,7 @@ Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markd
     }
 
     const words = generated.words.slice(0, 20);
+    await recordGuestQuota(req, res);
     recordGeneratedWords(words);
     res.json({ words });
   } catch (error) {
@@ -677,10 +1086,15 @@ Use natural ${targetLabel} translations and no markdown.
 `;
 
   try {
+    if (!(await enforceFreeAccountRateLimit(req, res))) {
+      return;
+    }
+
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.word) {
       return res.status(502).json({ error: "Generation service returned invalid data." });
     }
+    await recordGuestQuota(req, res);
     recordGeneratedWords([generated]);
     res.json({ word: generated });
   } catch (error) {
@@ -763,10 +1177,15 @@ Use the Band 8-9 requirements for the ${targetLabel} translation while preservin
 `;
 
   try {
+    if (!(await enforceFreeAccountRateLimit(req, res))) {
+      return;
+    }
+
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.translation) {
       return res.status(502).json({ error: "AI service returned invalid translation data." });
     }
+    await recordGuestQuota(req, res);
     recordSentenceTranslation();
     res.json(generated);
   } catch (error) {
