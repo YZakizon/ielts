@@ -343,6 +343,7 @@ app.post("/api/translate-sentence", async (req, res) => {
 
   const sourceLabel = translationLanguageLabels[sourceLanguage];
   const targetLabel = translationLanguageLabels[targetLanguage];
+  const needsIeltsFeedback = sourceLanguage === "english";
   const prompt = `
 Translate this sentence or short paragraph from ${sourceLabel} into natural ${targetLabel}:
 "${text.replaceAll('"', '\\"')}"
@@ -355,8 +356,14 @@ Return only valid JSON with this shape:
   ],
   "notes": [
     "Short grammar or word-choice note for IELTS learners"
-  ]
+  ],
+  "ieltsFeedback": {
+    "correctedSentence": "${needsIeltsFeedback ? "Corrected English sentence, or the original if already correct" : ""}",
+    "corrections": ${needsIeltsFeedback ? '["Specific grammar, spelling, or word-choice correction"]' : "[]"},
+    "suggestions": ${needsIeltsFeedback ? '["IELTS-focused suggestion to make the sentence more academic, accurate, or natural"]' : "[]"}
+  }
 }
+${needsIeltsFeedback ? "Because the source language is English, provide concise correction and IELTS learner suggestions." : "Because the source language is not English, leave ieltsFeedback fields empty."}
 Keep the translation faithful to the original meaning. Use natural ${targetLabel}, no markdown, and no extra keys.
 `;
 

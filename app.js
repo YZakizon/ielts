@@ -729,6 +729,7 @@ const clearSentenceBtn = document.querySelector("#clearSentenceBtn");
 const translationOutput = document.querySelector("#translationOutput");
 const translationStatus = document.querySelector("#translationStatus");
 const translationNotes = document.querySelector("#translationNotes");
+const ieltsFeedback = document.querySelector("#ieltsFeedback");
 const sourceLanguageSelect = document.querySelector("#sourceLanguageSelect");
 const targetLanguageSelect = document.querySelector("#targetLanguageSelect");
 const sourceLanguageLabel = document.querySelector("#sourceLanguageLabel");
@@ -1060,6 +1061,7 @@ async function searchWithAi(query, variant, targetLanguage) {
 }
 
 function normalizeTranslationResult(data, originalText) {
+  const feedback = data.ieltsFeedback || data.feedback || {};
   return {
     translation: String(data.translation || "").trim(),
     notes: Array.isArray(data.notes)
@@ -1074,6 +1076,15 @@ function normalizeTranslationResult(data, originalText) {
           }))
           .filter((phrase) => phrase.source && phrase.target)
       : [],
+    ieltsFeedback: {
+      correctedSentence: String(feedback.correctedSentence || "").trim(),
+      corrections: Array.isArray(feedback.corrections)
+        ? feedback.corrections.slice(0, 5).map((item) => String(item).trim()).filter(Boolean)
+        : [],
+      suggestions: Array.isArray(feedback.suggestions)
+        ? feedback.suggestions.slice(0, 5).map((item) => String(item).trim()).filter(Boolean)
+        : [],
+    },
     originalText,
   };
 }
@@ -1085,6 +1096,7 @@ async function translateSentence() {
     translationOutput.textContent = "Translation will appear here.";
     translationOutput.classList.add("empty-result");
     translationNotes.classList.add("hidden");
+    ieltsFeedback.classList.add("hidden");
     return;
   }
 
@@ -1093,6 +1105,7 @@ async function translateSentence() {
   translationOutput.textContent = "";
   translationOutput.classList.add("empty-result");
   translationNotes.classList.add("hidden");
+  ieltsFeedback.classList.add("hidden");
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(() => controller.abort(), 18000);
@@ -1126,6 +1139,7 @@ async function translateSentence() {
     translationOutput.classList.remove("empty-result");
     translationStatus.textContent = "Done";
     renderTranslationNotes(result);
+    renderIeltsFeedback(result);
   } catch (error) {
     const message =
       error.name === "AbortError"
@@ -1134,10 +1148,48 @@ async function translateSentence() {
     translationStatus.textContent = message;
     translationOutput.textContent = "Translation is not available yet.";
     translationOutput.classList.add("empty-result");
+    ieltsFeedback.classList.add("hidden");
   } finally {
     window.clearTimeout(timeoutId);
     translateSentenceBtn.disabled = false;
   }
+}
+
+function renderIeltsFeedback(result) {
+  const feedback = result.ieltsFeedback;
+  const shouldShow =
+    sourceLanguageSelect.value === "english" &&
+    (feedback.correctedSentence || feedback.corrections.length || feedback.suggestions.length);
+
+  if (!shouldShow) {
+    ieltsFeedback.classList.add("hidden");
+    ieltsFeedback.innerHTML = "";
+    return;
+  }
+
+  const sections = [`<h2>Correction and Suggestions</h2>`];
+  if (feedback.correctedSentence) {
+    sections.push(`<p class="corrected-sentence">${escapeHtml(feedback.correctedSentence)}</p>`);
+  }
+  if (feedback.corrections.length) {
+    sections.push(`
+      <section>
+        <h2>Corrections</h2>
+        <ul>${feedback.corrections.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </section>
+    `);
+  }
+  if (feedback.suggestions.length) {
+    sections.push(`
+      <section>
+        <h2>IELTS Suggestions</h2>
+        <ul>${feedback.suggestions.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+      </section>
+    `);
+  }
+
+  ieltsFeedback.innerHTML = sections.join("");
+  ieltsFeedback.classList.remove("hidden");
 }
 
 function renderTranslationNotes(result) {
@@ -1537,6 +1589,7 @@ clearSentenceBtn.addEventListener("click", () => {
   translationOutput.classList.add("empty-result");
   translationStatus.textContent = "";
   translationNotes.classList.add("hidden");
+  ieltsFeedback.classList.add("hidden");
   updateSentenceCount();
   sentenceInput.focus();
 });

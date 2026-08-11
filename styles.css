@@ -800,6 +800,41 @@ button:hover {
   line-height: 1.7;
 }
 
+.ielts-feedback {
+  display: grid;
+  grid-column: 3;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfb;
+}
+
+.ielts-feedback h2 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+}
+
+.ielts-feedback p {
+  margin-bottom: 0;
+  line-height: 1.65;
+}
+
+.ielts-feedback ul {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+
+.corrected-sentence {
+  padding: 12px;
+  border-left: 4px solid var(--accent);
+  background: #eef7f4;
+  color: var(--ink);
+  font-weight: 750;
+}
+
 @media (max-width: 760px) {
   .site-header {
     width: min(100% - 20px, 1180px);
@@ -870,6 +905,10 @@ button:hover {
 
   .language-controls {
     grid-template-columns: 1fr;
+  }
+
+  .ielts-feedback {
+    grid-column: 1;
   }
 
   .study-grid {
