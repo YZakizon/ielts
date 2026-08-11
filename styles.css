@@ -715,7 +715,7 @@ button:hover {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: repeat(2, minmax(170px, 210px));
-  justify-content: start;
+  justify-content: space-between;
   column-gap: 8px;
   row-gap: 10px;
 }
@@ -726,6 +726,10 @@ button:hover {
   color: var(--muted);
   font-size: 0.86rem;
   font-weight: 850;
+}
+
+.language-controls label:last-child {
+  justify-self: end;
 }
 
 .translation-box {
