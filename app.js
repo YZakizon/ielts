@@ -753,6 +753,7 @@ const englishVariantLabels = {
 const translationLanguageLabels = {
   auto: "Detect language",
   english: "English",
+  "english-australia": "English Australia",
   indonesian: "Bahasa Indonesia",
   spanish: "Spanish",
   french: "French",
