@@ -296,6 +296,49 @@ Use natural Bahasa Indonesia translations and no markdown.
   }
 });
 
+app.post("/api/translate-sentence", async (req, res) => {
+  const text = String(req.body?.text || "").trim();
+
+  if (!text) {
+    return res.status(400).json({ error: "Sentence text is required." });
+  }
+
+  if (text.length > 800) {
+    return res.status(400).json({ error: "Sentence text must be 800 characters or fewer." });
+  }
+
+  if (!process.env.AI_API_KEY) {
+    return res.status(503).json({ error: "AI_API_KEY is not configured." });
+  }
+
+  const prompt = `
+Translate this English sentence or short paragraph into natural Bahasa Indonesia:
+"${text.replaceAll('"', '\\"')}"
+
+Return only valid JSON with this shape:
+{
+  "translation": "Natural Bahasa Indonesia translation",
+  "keyPhrases": [
+    { "english": "important English phrase", "indonesian": "Bahasa Indonesia meaning" }
+  ],
+  "notes": [
+    "Short grammar or word-choice note for Indonesian IELTS learners"
+  ]
+}
+Keep the translation faithful to the original meaning. Use natural Bahasa Indonesia, no markdown, and no extra keys.
+`;
+
+  try {
+    const generated = await fetchGeneratedJson(prompt);
+    if (!generated.translation) {
+      return res.status(502).json({ error: "AI service returned invalid translation data." });
+    }
+    res.json(generated);
+  } catch (error) {
+    res.status(502).json({ error: error.message || "Sentence translation failed." });
+  }
+});
+
 app.get("*", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });

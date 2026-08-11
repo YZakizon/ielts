@@ -3,20 +3,81 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>IELTS Vocabulary Builder</title>
+    <title>IELTS Study Hub</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <header class="site-header">
+      <a class="brand" href="#home" aria-label="IELTS Study Hub home">
+        <span class="brand-mark">I</span>
+        <span>IELTS Study Hub</span>
+      </a>
+      <nav class="site-nav" aria-label="Main navigation">
+        <button id="homePageBtn" class="nav-button active" type="button">Home</button>
+        <button id="ieltsVocabPageBtn" class="nav-button" type="button">IELTS Vocab</button>
+        <button id="sentenceTranslationPageBtn" class="nav-button" type="button">Sentence Translation</button>
+      </nav>
+    </header>
+
     <main class="app-shell">
-      <section class="toolbar" aria-label="Vocabulary controls">
-        <div>
-          <p class="eyebrow">IELTS Vocabulary</p>
-          <h1>English to Bahasa Indonesia</h1>
-        </div>
-        <nav class="top-nav" aria-label="Main navigation">
-          <button id="vocabViewBtn" class="nav-button active" type="button">Vocabulary</button>
-          <button id="historyViewBtn" class="nav-button" type="button">History</button>
-        </nav>
+      <section id="homePage" class="page-view landing-page" aria-label="IELTS Study Hub homepage">
+        <section class="landing-hero">
+          <div class="hero-copy">
+            <p class="eyebrow">IELTS English to Bahasa Indonesia</p>
+            <h1>Practice vocabulary and translate sentences in one focused study space.</h1>
+            <p>
+              Build IELTS-ready word knowledge, review past vocabulary, and convert
+              full English sentences into natural Bahasa Indonesia for writing and speaking practice.
+            </p>
+            <div class="hero-actions">
+              <button id="startVocabBtn" type="button">Open Vocab</button>
+              <button id="startTranslationBtn" class="secondary-button" type="button">Translate Sentence</button>
+            </div>
+          </div>
+          <div class="hero-board" aria-hidden="true">
+            <div class="hero-card strong">
+              <span>cohesive</span>
+              <small>padu; kohesif</small>
+            </div>
+            <div class="hero-card">
+              <span>Urban planning can reduce congestion.</span>
+              <small>Perencanaan kota dapat mengurangi kemacetan.</small>
+            </div>
+            <div class="hero-card accent">
+              <span>Band 7+ tools</span>
+              <small>Vocabulary, examples, usage, translation</small>
+            </div>
+          </div>
+        </section>
+
+        <section class="feature-grid" aria-label="Study tools">
+          <article class="feature-card">
+            <h2>IELTS Vocab</h2>
+            <p>Generate level-based words, read IPA pronunciation, compare synonyms, and save your review history.</p>
+            <button id="featureVocabBtn" class="ghost-button" type="button">Open</button>
+          </article>
+          <article class="feature-card">
+            <h2>Sentence Translation</h2>
+            <p>Paste an English sentence and receive natural Bahasa Indonesia with grammar notes and key phrase meaning.</p>
+            <button id="featureTranslationBtn" class="ghost-button" type="button">Open</button>
+          </article>
+          <article class="feature-card">
+            <h2>Writing Support</h2>
+            <p>Use academic examples and sentence-level translations to prepare cleaner IELTS Task 1 and Task 2 answers.</p>
+          </article>
+        </section>
+      </section>
+
+      <section id="ieltsVocabPage" class="page-view hidden" aria-label="IELTS vocabulary page">
+        <section class="toolbar" aria-label="Vocabulary controls">
+          <div>
+            <p class="eyebrow">IELTS Vocabulary</p>
+            <h1>English to Bahasa Indonesia</h1>
+          </div>
+          <nav class="top-nav" aria-label="Vocabulary navigation">
+            <button id="vocabViewBtn" class="nav-button active" type="button">Vocabulary</button>
+            <button id="historyViewBtn" class="nav-button" type="button">History</button>
+          </nav>
         <div class="controls">
           <label for="levelSelect">Level</label>
           <select id="levelSelect">
@@ -40,63 +101,96 @@
         <p id="statusText" class="status-text" role="status"></p>
       </section>
 
-      <section id="studyView" class="study-grid" aria-label="Vocabulary study area">
-        <aside class="panel vocab-panel">
-          <div class="panel-header">
-            <div>
-              <p class="eyebrow">Left side</p>
-              <h2>Vocabulary</h2>
+        <section id="studyView" class="study-grid" aria-label="Vocabulary study area">
+          <aside class="panel vocab-panel">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Left side</p>
+                <h2>Vocabulary</h2>
+              </div>
+              <span id="wordCount" class="count">0 words</span>
             </div>
-            <span id="wordCount" class="count">0 words</span>
-          </div>
-          <div class="step-controls">
-            <label class="checkbox-control" for="oneByOneToggle">
-              <input id="oneByOneToggle" type="checkbox" />
-              <span>Show one by one</span>
-            </label>
-            <button id="prevWordBtn" class="ghost-button" type="button">Prev</button>
-            <span id="wordPosition" class="word-position">0 / 0</span>
-            <button id="nextWordBtn" class="ghost-button" type="button">Next</button>
-          </div>
-          <div id="vocabList" class="vocab-list" aria-live="polite"></div>
-        </aside>
+            <div class="step-controls">
+              <label class="checkbox-control" for="oneByOneToggle">
+                <input id="oneByOneToggle" type="checkbox" />
+                <span>Show one by one</span>
+              </label>
+              <button id="prevWordBtn" class="ghost-button" type="button">Prev</button>
+              <span id="wordPosition" class="word-position">0 / 0</span>
+              <button id="nextWordBtn" class="ghost-button" type="button">Next</button>
+            </div>
+            <div id="vocabList" class="vocab-list" aria-live="polite"></div>
+          </aside>
 
-        <section class="panel detail-panel" aria-live="polite">
+          <section class="panel detail-panel" aria-live="polite">
+            <div class="panel-header">
+              <div>
+                <p class="eyebrow">Right side</p>
+                <h2>Translation & Usage</h2>
+              </div>
+            </div>
+            <article id="detailContent" class="detail-content empty-state">
+              <div class="empty-visual" aria-hidden="true">Aa</div>
+              <h3>Click one vocabulary item</h3>
+              <p>
+                The Bahasa Indonesia translation, synonyms, usage explanation,
+                and IELTS-style example will appear here.
+              </p>
+            </article>
+          </section>
+        </section>
+
+        <section id="historyView" class="history-view panel hidden" aria-label="Vocabulary history">
           <div class="panel-header">
             <div>
-              <p class="eyebrow">Right side</p>
-              <h2>Translation & Usage</h2>
+              <p class="eyebrow">Saved locally</p>
+              <h2>History</h2>
             </div>
+            <button id="clearHistoryBtn" class="ghost-button" type="button">Clear</button>
           </div>
-          <article id="detailContent" class="detail-content empty-state">
-            <div class="empty-visual" aria-hidden="true">Aa</div>
-            <h3>Click one vocabulary item</h3>
-            <p>
-              The Bahasa Indonesia translation, synonyms, usage explanation,
-              and IELTS-style example will appear here.
-            </p>
-          </article>
+          <div class="history-content">
+            <section>
+              <h3>Words</h3>
+              <div id="historyList" class="history-list"></div>
+            </section>
+            <section>
+              <h3>Generated batches</h3>
+              <div id="batchHistoryList" class="batch-history-list"></div>
+            </section>
+          </div>
         </section>
       </section>
 
-      <section id="historyView" class="history-view panel hidden" aria-label="Vocabulary history">
-        <div class="panel-header">
-          <div>
-            <p class="eyebrow">Saved locally</p>
-            <h2>History</h2>
+      <section id="sentenceTranslationPage" class="page-view hidden" aria-label="Sentence translation page">
+        <section class="translator-layout">
+          <div class="translator-heading">
+            <p class="eyebrow">Sentence Translation</p>
+            <h1>Translate English sentences into Bahasa Indonesia.</h1>
           </div>
-          <button id="clearHistoryBtn" class="ghost-button" type="button">Clear</button>
-        </div>
-        <div class="history-content">
-          <section>
-            <h3>Words</h3>
-            <div id="historyList" class="history-list"></div>
+          <section class="translator-panel" aria-label="Sentence translator">
+            <div class="translation-box">
+              <div class="box-header">
+                <label for="sentenceInput">English</label>
+                <span id="sentenceCount">0 / 800</span>
+              </div>
+              <textarea id="sentenceInput" rows="10" maxlength="800" placeholder="Type or paste an English sentence here."></textarea>
+            </div>
+            <div class="translation-actions">
+              <button id="translateSentenceBtn" type="button">Translate</button>
+              <button id="clearSentenceBtn" class="ghost-button" type="button">Clear</button>
+            </div>
+            <div class="translation-box result-box">
+              <div class="box-header">
+                <span>Bahasa Indonesia</span>
+                <span id="translationStatus" role="status"></span>
+              </div>
+              <div id="translationOutput" class="translation-output empty-result">
+                Terjemahan akan muncul di sini.
+              </div>
+            </div>
+            <div id="translationNotes" class="translation-notes hidden"></div>
           </section>
-          <section>
-            <h3>Generated batches</h3>
-            <div id="batchHistoryList" class="batch-history-list"></div>
-          </section>
-        </div>
+        </section>
       </section>
     </main>
 

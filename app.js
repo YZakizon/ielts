@@ -701,6 +701,16 @@ const wordPosition = document.querySelector("#wordPosition");
 const searchInput = document.querySelector("#searchInput");
 const searchBtn = document.querySelector("#searchBtn");
 const vocabList = document.querySelector("#vocabList");
+const homePage = document.querySelector("#homePage");
+const ieltsVocabPage = document.querySelector("#ieltsVocabPage");
+const sentenceTranslationPage = document.querySelector("#sentenceTranslationPage");
+const homePageBtn = document.querySelector("#homePageBtn");
+const ieltsVocabPageBtn = document.querySelector("#ieltsVocabPageBtn");
+const sentenceTranslationPageBtn = document.querySelector("#sentenceTranslationPageBtn");
+const startVocabBtn = document.querySelector("#startVocabBtn");
+const startTranslationBtn = document.querySelector("#startTranslationBtn");
+const featureVocabBtn = document.querySelector("#featureVocabBtn");
+const featureTranslationBtn = document.querySelector("#featureTranslationBtn");
 const vocabViewBtn = document.querySelector("#vocabViewBtn");
 const historyViewBtn = document.querySelector("#historyViewBtn");
 const studyView = document.querySelector("#studyView");
@@ -711,6 +721,13 @@ const batchHistoryList = document.querySelector("#batchHistoryList");
 const detailContent = document.querySelector("#detailContent");
 const wordCount = document.querySelector("#wordCount");
 const statusText = document.querySelector("#statusText");
+const sentenceInput = document.querySelector("#sentenceInput");
+const sentenceCount = document.querySelector("#sentenceCount");
+const translateSentenceBtn = document.querySelector("#translateSentenceBtn");
+const clearSentenceBtn = document.querySelector("#clearSentenceBtn");
+const translationOutput = document.querySelector("#translationOutput");
+const translationStatus = document.querySelector("#translationStatus");
+const translationNotes = document.querySelector("#translationNotes");
 
 let currentWords = [];
 let selectedWord = null;
@@ -729,6 +746,15 @@ const englishVariantLabels = {
 
 function shuffle(items) {
   return [...items].sort(() => Math.random() - 0.5);
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
 }
 
 function withLocalDetails(item) {
@@ -881,6 +907,38 @@ function setStatus(message, isError = false) {
   statusText.classList.toggle("error", isError);
 }
 
+function showPage(pageName, shouldUpdateHash = true) {
+  const pageMap = {
+    home: homePage,
+    "ielts-vocab": ieltsVocabPage,
+    "sentence-translation": sentenceTranslationPage,
+  };
+  const navMap = {
+    home: homePageBtn,
+    "ielts-vocab": ieltsVocabPageBtn,
+    "sentence-translation": sentenceTranslationPageBtn,
+  };
+  const selectedPage = pageMap[pageName] ? pageName : "home";
+
+  Object.entries(pageMap).forEach(([key, element]) => {
+    element.classList.toggle("hidden", key !== selectedPage);
+  });
+  Object.entries(navMap).forEach(([key, button]) => {
+    button.classList.toggle("active", key === selectedPage);
+  });
+
+  if (selectedPage === "ielts-vocab") {
+    renderList();
+    renderHistory();
+  }
+  if (selectedPage === "sentence-translation") {
+    sentenceInput.focus();
+  }
+  if (shouldUpdateHash) {
+    history.replaceState(null, "", `#${selectedPage}`);
+  }
+}
+
 function normalizeGeneratedWords(words, level) {
   if (!Array.isArray(words)) {
     throw new Error("The generation service did not return a vocabulary array.");
@@ -977,6 +1035,116 @@ async function searchWithAi(query, variant) {
 
   const data = await response.json();
   return withLocalDetails(data.word);
+}
+
+function normalizeTranslationResult(data, originalText) {
+  return {
+    translation: String(data.translation || "").trim(),
+    notes: Array.isArray(data.notes)
+      ? data.notes.slice(0, 5).map((note) => String(note).trim()).filter(Boolean)
+      : [],
+    keyPhrases: Array.isArray(data.keyPhrases)
+      ? data.keyPhrases
+          .slice(0, 6)
+          .map((phrase) => ({
+            english: String(phrase.english || "").trim(),
+            indonesian: String(phrase.indonesian || "").trim(),
+          }))
+          .filter((phrase) => phrase.english && phrase.indonesian)
+      : [],
+    originalText,
+  };
+}
+
+async function translateSentence() {
+  const text = sentenceInput.value.trim();
+  if (!text) {
+    translationStatus.textContent = "Type a sentence first.";
+    translationOutput.textContent = "Terjemahan akan muncul di sini.";
+    translationOutput.classList.add("empty-result");
+    translationNotes.classList.add("hidden");
+    return;
+  }
+
+  translateSentenceBtn.disabled = true;
+  translationStatus.textContent = "Translating...";
+  translationOutput.textContent = "";
+  translationOutput.classList.add("empty-result");
+  translationNotes.classList.add("hidden");
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), 18000);
+
+  try {
+    const response = await fetch("/api/translate-sentence", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ text }),
+      signal: controller.signal,
+    });
+    window.clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(errorText || `Translation request failed: ${response.status}`);
+    }
+
+    const result = normalizeTranslationResult(await response.json(), text);
+    if (!result.translation) {
+      throw new Error("Translation service returned an empty response.");
+    }
+
+    translationOutput.textContent = result.translation;
+    translationOutput.classList.remove("empty-result");
+    translationStatus.textContent = "Done";
+    renderTranslationNotes(result);
+  } catch (error) {
+    const message =
+      error.name === "AbortError"
+        ? "Translation took too long."
+        : `Translation unavailable. ${error.message.slice(0, 140)}`;
+    translationStatus.textContent = message;
+    translationOutput.textContent = "Terjemahan belum tersedia.";
+    translationOutput.classList.add("empty-result");
+  } finally {
+    window.clearTimeout(timeoutId);
+    translateSentenceBtn.disabled = false;
+  }
+}
+
+function renderTranslationNotes(result) {
+  const sections = [];
+  if (result.keyPhrases.length) {
+    sections.push(`
+      <section>
+        <h2>Key Phrases</h2>
+        <ul>
+          ${result.keyPhrases
+            .map((phrase) => `<li>${escapeHtml(phrase.english)}: ${escapeHtml(phrase.indonesian)}</li>`)
+            .join("")}
+        </ul>
+      </section>
+    `);
+  }
+  if (result.notes.length) {
+    sections.push(`
+      <section>
+        <h2>Notes</h2>
+        <ul>
+          ${result.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("")}
+        </ul>
+      </section>
+    `);
+  }
+
+  translationNotes.innerHTML = sections.join("");
+  translationNotes.classList.toggle("hidden", !sections.length);
+}
+
+function updateSentenceCount() {
+  sentenceCount.textContent = `${sentenceInput.value.length} / ${sentenceInput.maxLength}`;
 }
 
 async function generateWords() {
@@ -1293,10 +1461,33 @@ clearHistoryBtn.addEventListener("click", () => {
 });
 vocabViewBtn.addEventListener("click", () => showView("vocab"));
 historyViewBtn.addEventListener("click", () => showView("history"));
+homePageBtn.addEventListener("click", () => showPage("home"));
+ieltsVocabPageBtn.addEventListener("click", () => showPage("ielts-vocab"));
+sentenceTranslationPageBtn.addEventListener("click", () => showPage("sentence-translation"));
+startVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
+featureVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
+startTranslationBtn.addEventListener("click", () => showPage("sentence-translation"));
+featureTranslationBtn.addEventListener("click", () => showPage("sentence-translation"));
 searchBtn.addEventListener("click", searchVocabulary);
 searchInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     searchVocabulary();
+  }
+});
+translateSentenceBtn.addEventListener("click", translateSentence);
+clearSentenceBtn.addEventListener("click", () => {
+  sentenceInput.value = "";
+  translationOutput.textContent = "Terjemahan akan muncul di sini.";
+  translationOutput.classList.add("empty-result");
+  translationStatus.textContent = "";
+  translationNotes.classList.add("hidden");
+  updateSentenceCount();
+  sentenceInput.focus();
+});
+sentenceInput.addEventListener("input", updateSentenceCount);
+sentenceInput.addEventListener("keydown", (event) => {
+  if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    translateSentence();
   }
 });
 levelSelect.addEventListener("change", generateWords);
@@ -1307,3 +1498,5 @@ renderHistory();
 if (!loadAppState()) {
   generateWords();
 }
+updateSentenceCount();
+showPage(window.location.hash.replace("#", "") || "home", false);
