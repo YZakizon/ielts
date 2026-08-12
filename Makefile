@@ -1,5 +1,6 @@
 COMPOSE ?= docker compose
-COMPOSE_PROFILES ?= dev
+HOSTNAME ?= $(shell hostname)
+COMPOSE_PROFILES ?= $(if $(filter td340,$(HOSTNAME)),td340,dev)
 comma := ,
 ACTIVE_PROFILES := $(subst $(comma), ,$(COMPOSE_PROFILES))
 SERVICE ?=
