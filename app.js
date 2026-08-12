@@ -704,12 +704,22 @@ const searchBtn = document.querySelector("#searchBtn");
 const vocabList = document.querySelector("#vocabList");
 const loginPage = document.querySelector("#loginPage");
 const loginForm = document.querySelector("#loginForm");
-const loginUsername = document.querySelector("#loginUsername");
+const loginEmail = document.querySelector("#loginEmail");
 const loginPassword = document.querySelector("#loginPassword");
+const togglePasswordBtn = document.querySelector("#togglePasswordBtn");
 const loginBtn = document.querySelector("#loginBtn");
 const loginStatus = document.querySelector("#loginStatus");
+const authHeading = document.querySelector("#authHeading");
+const signupModeBtn = document.querySelector("#signupModeBtn");
+const loginModeBtn = document.querySelector("#loginModeBtn");
+const authCloseBtn = document.querySelector("#authCloseBtn");
 const siteHeader = document.querySelector("#siteHeader");
 const appShell = document.querySelector("#appShell");
+const accountBtn = document.querySelector("#accountBtn");
+const profileMenuRoot = document.querySelector("#profileMenuRoot");
+const profileBtn = document.querySelector("#profileBtn");
+const profileMenu = document.querySelector("#profileMenu");
+const adminMenuLink = document.querySelector("#adminMenuLink");
 const logoutBtn = document.querySelector("#logoutBtn");
 const homePage = document.querySelector("#homePage");
 const ieltsVocabPage = document.querySelector("#ieltsVocabPage");
@@ -754,6 +764,7 @@ const generatedStorageKey = "ielts-vocab-generated-batches";
 const appStateStorageKey = "ielts-vocab-app-state";
 const defaultVisibleWordCount = 5;
 let appStarted = false;
+let authMode = "signup";
 
 const englishVariantLabels = {
   us: "US English",
@@ -956,24 +967,54 @@ function setLoginStatus(message, isError = false) {
   loginStatus.classList.toggle("error", isError);
 }
 
-function showAuthenticatedApp() {
+function showApp() {
   loginPage.classList.add("hidden");
   siteHeader.classList.remove("hidden");
   appShell.classList.remove("hidden");
 }
 
-function showLogin() {
+function showAuthPrompt(message = "") {
   loginPage.classList.remove("hidden");
-  siteHeader.classList.add("hidden");
-  appShell.classList.add("hidden");
   loginPassword.value = "";
-  loginUsername.focus();
+  if (message) {
+    setLoginStatus(message, true);
+  } else {
+    setLoginStatus("");
+  }
+  loginEmail.focus();
 }
 
 function handleUnauthorized() {
-  appStarted = false;
-  showLogin();
-  setLoginStatus("Please login to continue.", true);
+  showAuthPrompt("Free trial complete. Create an account or sign in.");
+}
+
+function setAuthMode(mode) {
+  authMode = mode === "login" ? "login" : "signup";
+  signupModeBtn.classList.toggle("active", authMode === "signup");
+  loginModeBtn.classList.toggle("active", authMode === "login");
+  signupModeBtn.setAttribute("aria-selected", String(authMode === "signup"));
+  loginModeBtn.setAttribute("aria-selected", String(authMode === "login"));
+  authHeading.textContent = authMode === "signup" ? "Create an account" : "Welcome back";
+  loginBtn.textContent = authMode === "signup" ? "Create account" : "Login";
+  setLoginStatus("");
+}
+
+function updateQuotaBanner(session = {}) {
+  const authenticated = Boolean(session.authenticated);
+  accountBtn.classList.toggle("hidden", authenticated);
+  profileMenuRoot.classList.toggle("hidden", !authenticated);
+  adminMenuLink.classList.toggle("hidden", !session.isAdmin);
+  if (!authenticated) {
+    profileMenu.classList.add("hidden");
+    profileBtn.setAttribute("aria-expanded", "false");
+  }
+}
+
+async function refreshSession() {
+  const response = await fetch("/api/session");
+  const session = await response.json();
+  updateQuotaBanner(session);
+  return session;
 }
 
 async function fetchJson(url, options = {}) {
@@ -981,7 +1022,21 @@ async function fetchJson(url, options = {}) {
   if (response.status === 401) {
     handleUnauthorized();
   }
+  if (response.status === 402) {
+    const data = await response.clone().json().catch(() => ({}));
+    updateQuotaBanner({ authenticated: false, quota: data });
+    showAuthPrompt(data.error || "Free trial complete. Create an account or sign in.");
+  }
   return response;
+}
+
+async function responseErrorMessage(response, fallback) {
+  const data = await response.clone().json().catch(() => null);
+  if (data?.error) {
+    return data.error;
+  }
+  const text = await response.text().catch(() => "");
+  return text || fallback;
 }
 
 function showPage(pageName, shouldUpdateHash = true) {
@@ -1083,11 +1138,11 @@ async function generateWithAi(level, variant, targetLanguage) {
   window.clearTimeout(timeoutId);
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Generation request failed: ${response.status}`);
+    throw new Error(await responseErrorMessage(response, `Generation request failed: ${response.status}`));
   }
 
   const data = await response.json();
+  refreshSession().catch(() => {});
   return normalizeGeneratedWords(data.words, level);
 }
 
@@ -1106,11 +1161,11 @@ async function searchWithAi(query, variant, targetLanguage) {
   window.clearTimeout(timeoutId);
 
   if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(errorText || `Search request failed: ${response.status}`);
+    throw new Error(await responseErrorMessage(response, `Search request failed: ${response.status}`));
   }
 
   const data = await response.json();
+  refreshSession().catch(() => {});
   return withLocalDetails(data.word);
 }
 
@@ -1180,8 +1235,7 @@ async function translateSentence() {
     window.clearTimeout(timeoutId);
 
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(errorText || `Translation request failed: ${response.status}`);
+      throw new Error(await responseErrorMessage(response, `Translation request failed: ${response.status}`));
     }
 
     const result = normalizeTranslationResult(await response.json(), text);
@@ -1194,6 +1248,7 @@ async function translateSentence() {
     translationStatus.textContent = "Done";
     renderTranslationNotes(result);
     renderIeltsFeedback(result);
+    refreshSession().catch(() => {});
   } catch (error) {
     const message =
       error.name === "AbortError"
@@ -1544,11 +1599,11 @@ async function login(event) {
   loginBtn.disabled = true;
 
   try {
-    const response = await fetch("/api/login", {
+    const response = await fetch(authMode === "signup" ? "/api/signup" : "/api/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        username: loginUsername.value.trim(),
+        email: loginEmail.value.trim(),
         password: loginPassword.value,
       }),
     });
@@ -1558,7 +1613,18 @@ async function login(event) {
     }
 
     setLoginStatus("");
-    showAuthenticatedApp();
+    if (authMode === "signup") {
+      setLoginStatus(
+        data.verificationEmailSent
+          ? "Account created. Check your email to verify your address."
+          : "Account created. Email delivery is not configured yet.",
+      );
+      await refreshSession();
+      startApp();
+      return;
+    }
+    showApp();
+    await refreshSession();
     startApp();
   } catch (error) {
     setLoginStatus(error.message, true);
@@ -1569,29 +1635,28 @@ async function login(event) {
 
 async function logout() {
   await fetch("/api/logout", { method: "POST" }).catch(() => {});
-  showLogin();
-  setLoginStatus("Logged out.");
+  profileMenu.classList.add("hidden");
+  profileBtn.setAttribute("aria-expanded", "false");
+  await refreshSession().catch(() => {});
+  showApp();
+  setLoginStatus("");
 }
 
 async function checkSession() {
   try {
-    const response = await fetch("/api/session");
-    const session = await response.json();
+    const session = await refreshSession();
     if (!session.configured) {
-      showLogin();
+      showAuthPrompt("Account login is not configured on the server.");
       setLoginStatus("Login is not configured on the server.", true);
       return;
     }
-    if (!session.authenticated) {
-      showLogin();
-      return;
-    }
 
-    showAuthenticatedApp();
+    showApp();
     startApp();
   } catch {
-    showLogin();
+    showApp();
     setLoginStatus("Could not check login status.", true);
+    startApp();
   }
 }
 
@@ -1602,7 +1667,12 @@ function startApp() {
   loadHistory();
   renderHistory();
   if (!loadAppState()) {
-    generateWords();
+    currentWords = fallbackWords(levelSelect.value);
+    selectedWord = null;
+    currentWordIndex = 0;
+    renderList();
+    renderEmptyState();
+    setStatus("Showing built-in words. Use Generate for AI vocabulary.");
   }
   updateSentenceCount();
   updateTranslationLanguageLabels();
@@ -1652,6 +1722,36 @@ batchHistoryList.addEventListener("click", (event) => {
 
 generateBtn.addEventListener("click", generateWords);
 loginForm.addEventListener("submit", login);
+signupModeBtn.addEventListener("click", () => setAuthMode("signup"));
+loginModeBtn.addEventListener("click", () => setAuthMode("login"));
+togglePasswordBtn.addEventListener("click", () => {
+  const shouldShow = loginPassword.type === "password";
+  loginPassword.type = shouldShow ? "text" : "password";
+  togglePasswordBtn.setAttribute("aria-label", shouldShow ? "Hide password" : "Show password");
+});
+authCloseBtn.addEventListener("click", () => {
+  loginPage.classList.add("hidden");
+  setLoginStatus("");
+});
+loginPage.addEventListener("click", (event) => {
+  if (event.target === loginPage) {
+    loginPage.classList.add("hidden");
+    setLoginStatus("");
+  }
+});
+accountBtn.addEventListener("click", () => showAuthPrompt());
+profileBtn.addEventListener("click", (event) => {
+  event.stopPropagation();
+  const shouldOpen = profileMenu.classList.contains("hidden");
+  profileMenu.classList.toggle("hidden", !shouldOpen);
+  profileBtn.setAttribute("aria-expanded", String(shouldOpen));
+});
+document.addEventListener("click", (event) => {
+  if (!profileMenuRoot.contains(event.target)) {
+    profileMenu.classList.add("hidden");
+    profileBtn.setAttribute("aria-expanded", "false");
+  }
+});
 logoutBtn.addEventListener("click", logout);
 oneByOneToggle.addEventListener("change", () => {
   currentWordIndex = Math.max(

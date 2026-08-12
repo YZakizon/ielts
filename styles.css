@@ -87,25 +87,70 @@ textarea {
 }
 
 .login-page {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
   display: grid;
   min-height: 100vh;
-  place-items: center;
+  place-items: start center;
   padding: 24px;
+  padding-top: min(12vh, 96px);
+  background: rgba(23, 33, 29, 0.24);
+  backdrop-filter: blur(6px);
 }
 
 .login-panel {
+  position: relative;
   display: grid;
-  width: min(420px, 100%);
+  width: min(390px, 100%);
   gap: 16px;
-  padding: 28px;
+  padding: 24px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.97);
   box-shadow: var(--shadow);
 }
 
+.auth-close-button {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  place-items: center;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.auth-close-button:hover {
+  background: #edf5f2;
+  color: var(--accent-dark);
+}
+
+.auth-close-button svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .login-panel h1 {
-  font-size: 2rem;
+  margin-bottom: 6px;
+  font-size: 1.55rem;
+}
+
+.auth-copy {
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .login-panel label {
@@ -115,10 +160,154 @@ textarea {
   font-weight: 800;
 }
 
+.password-field {
+  position: relative;
+  display: block;
+}
+
+.password-field input {
+  padding-right: 48px;
+}
+
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  place-items: center;
+  transform: translateY(-50%);
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.password-toggle:hover {
+  background: #edf5f2;
+  color: var(--accent-dark);
+}
+
+.password-toggle svg {
+  width: 19px;
+  height: 19px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
 .login-panel .status-text {
   justify-self: stretch;
   min-height: 22px;
   margin: 0;
+}
+
+.auth-tabs,
+.auth-actions {
+  display: flex;
+  gap: 10px;
+}
+
+.auth-tabs {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f6f8f6;
+}
+
+.auth-tabs .nav-button {
+  flex: 1;
+  min-height: 36px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.auth-tabs .nav-button.active {
+  background: #ffffff;
+  color: var(--accent-dark);
+  box-shadow: 0 6px 18px rgba(35, 48, 42, 0.08);
+}
+
+.auth-actions button {
+  width: 100%;
+}
+
+.icon-button {
+  display: inline-grid;
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  min-height: 40px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--muted);
+}
+
+.icon-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2;
+}
+
+.icon-button:hover,
+.icon-button.active {
+  border-color: rgba(31, 122, 99, 0.35);
+  background: #e9f4ef;
+  color: var(--accent-dark);
+}
+
+.profile-menu-root {
+  position: relative;
+  display: inline-grid;
+}
+
+.profile-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 20;
+  min-width: 140px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: var(--shadow);
+}
+
+.profile-menu a,
+.profile-menu button {
+  display: block;
+  width: 100%;
+  min-height: 38px;
+  padding: 10px 14px;
+  border-color: transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  line-height: 1.1;
+  text-decoration: none;
+  text-align: left;
+}
+
+.profile-menu a:hover,
+.profile-menu button:hover {
+  background: #edf5f2;
+  color: var(--accent-dark);
 }
 
 .landing-page {
@@ -879,7 +1068,7 @@ button:hover {
 
   .site-nav {
     display: grid;
-    grid-template-columns: 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .app-shell {
@@ -936,6 +1125,12 @@ button:hover {
 
   .translation-actions {
     display: flex;
+  }
+
+  .auth-actions,
+  .auth-tabs {
+    flex-direction: column;
+    align-items: stretch;
   }
 
   .language-controls {
