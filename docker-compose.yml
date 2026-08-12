@@ -11,6 +11,19 @@ x-postgres-healthcheck: &postgres-healthcheck
   timeout: 5s
   retries: 10
 
+x-postgres-command: &postgres-command
+  - postgres
+  - -c
+  - log_error_verbosity=verbose
+  - -c
+  - log_connections=on
+  - -c
+  - log_disconnections=on
+  - -c
+  - log_min_duration_statement=${POSTGRES_LOG_MIN_DURATION_STATEMENT:-1000}
+  - -c
+  - log_statement=${POSTGRES_LOG_STATEMENT:-none}
+
 x-app-env: &app-env
   PORT: 8080
   METRICS_FILE: /data/metrics.json
@@ -20,6 +33,7 @@ services:
     profiles: ["dev"]
     image: postgres:16-alpine
     container_name: ielts-dev-postgres
+    command: *postgres-command
     environment: *postgres-env
     healthcheck: *postgres-healthcheck
     volumes:
@@ -63,6 +77,7 @@ services:
     profiles: ["td340"]
     image: postgres:16-alpine
     container_name: ielts-postgres
+    command: *postgres-command
     environment: *postgres-env
     healthcheck: *postgres-healthcheck
     volumes:
