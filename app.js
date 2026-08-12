@@ -721,6 +721,8 @@ const appShell = document.querySelector("#appShell");
 const accountBtn = document.querySelector("#accountBtn");
 const profileMenuRoot = document.querySelector("#profileMenuRoot");
 const profileBtn = document.querySelector("#profileBtn");
+const profileButtonEmail = document.querySelector("#profileButtonEmail");
+const profileButtonPlan = document.querySelector("#profileButtonPlan");
 const profileMenu = document.querySelector("#profileMenu");
 const profileMenuEmail = document.querySelector("#profileMenuEmail");
 const profileMenuPlan = document.querySelector("#profileMenuPlan");
@@ -1044,11 +1046,15 @@ function setPasswordResetMode() {
 
 function updateQuotaBanner(session = {}) {
   const authenticated = Boolean(session.authenticated);
+  const displayEmail = session.email || "Signed in";
+  const planLabel = session.planLabel || session.planUsage?.planLabel || "";
   accountBtn.classList.toggle("hidden", authenticated);
   profileMenuRoot.classList.toggle("hidden", !authenticated);
   adminMenuLink.classList.toggle("hidden", !session.isAdmin);
-  profileMenuEmail.textContent = authenticated ? session.email || "Signed in" : "";
-  profileMenuPlan.textContent = authenticated && session.planLabel ? `${session.planLabel} plan` : "";
+  profileButtonEmail.textContent = authenticated ? displayEmail : "";
+  profileButtonPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
+  profileMenuEmail.textContent = authenticated ? displayEmail : "";
+  profileMenuPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
   if (!authenticated) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");

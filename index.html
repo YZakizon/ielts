@@ -95,11 +95,15 @@
           </svg>
         </button>
         <div id="profileMenuRoot" class="profile-menu-root hidden">
-          <button id="profileBtn" class="icon-button" type="button" aria-label="Profile" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu">
+          <button id="profileBtn" class="profile-button" type="button" aria-label="Profile" aria-haspopup="menu" aria-expanded="false" aria-controls="profileMenu">
             <svg aria-hidden="true" viewBox="0 0 24 24">
               <path d="M20 21a8 8 0 0 0-16 0" />
               <circle cx="12" cy="7" r="4" />
             </svg>
+            <span class="profile-button-text">
+              <span id="profileButtonEmail" class="profile-button-email">Signed in</span>
+              <span id="profileButtonPlan" class="profile-button-plan"></span>
+            </span>
           </button>
           <div id="profileMenu" class="profile-menu hidden" role="menu">
             <div id="profileMenuEmail" class="profile-menu-email"></div>
