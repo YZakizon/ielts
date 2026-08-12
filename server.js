@@ -110,6 +110,8 @@ function loadMetrics() {
     const saved = JSON.parse(fs.readFileSync(metricsFile, "utf8"));
     return {
       aiCallsTotal: Number(saved.aiCallsTotal || 0),
+      aiCallsByKeyType: sanitizeMetricCounts(saved.aiCallsByKeyType, ["primary", "paid"]),
+      aiTokensByKeyType: sanitizeMetricCounts(saved.aiTokensByKeyType, ["primary", "paid"]),
       aiTokensTotal: Number(saved.aiTokensTotal || 0),
       distinctVocab: Array.isArray(saved.distinctVocab) ? saved.distinctVocab.slice(0, maxDistinctVocab) : [],
       sentenceTranslationsByDay: saved.sentenceTranslationsByDay || {},
@@ -120,6 +122,8 @@ function loadMetrics() {
   } catch {
     return {
       aiCallsTotal: 0,
+      aiCallsByKeyType: { primary: 0, paid: 0 },
+      aiTokensByKeyType: { primary: 0, paid: 0 },
       aiTokensTotal: 0,
       distinctVocab: [],
       sentenceTranslationsByDay: {},
@@ -141,6 +145,10 @@ function sanitizeUniqueUsersByDay(value = {}) {
           .slice(0, maxDailyUniqueUsers),
       ]),
   );
+}
+
+function sanitizeMetricCounts(value = {}, keys = []) {
+  return Object.fromEntries(keys.map((key) => [key, Number(value?.[key] || 0)]));
 }
 
 function saveMetrics() {
@@ -532,9 +540,13 @@ function recordGeneratedWords(words) {
   saveMetrics();
 }
 
-function recordAiUsage(data) {
+function recordAiUsage(data, keyType = "primary") {
+  const normalizedKeyType = keyType === "paid" ? "paid" : "primary";
+  const tokens = Number(data.usageMetadata?.totalTokenCount || 0);
   metrics.aiCallsTotal += 1;
-  metrics.aiTokensTotal += Number(data.usageMetadata?.totalTokenCount || 0);
+  metrics.aiCallsByKeyType[normalizedKeyType] = Number(metrics.aiCallsByKeyType[normalizedKeyType] || 0) + 1;
+  metrics.aiTokensTotal += tokens;
+  metrics.aiTokensByKeyType[normalizedKeyType] = Number(metrics.aiTokensByKeyType[normalizedKeyType] || 0) + tokens;
   saveMetrics();
 }
 
@@ -822,9 +834,19 @@ function renderMetrics() {
     "# HELP ielts_ai_calls_total Total successful AI generation calls.",
     "# TYPE ielts_ai_calls_total counter",
     metricLine("ielts_ai_calls_total", metrics.aiCallsTotal),
+    "# HELP ielts_ai_api_key_calls_total Total successful AI generation calls by configured key type.",
+    "# TYPE ielts_ai_api_key_calls_total counter",
+    ...Object.entries(metrics.aiCallsByKeyType).map(([keyType, count]) =>
+      metricLine("ielts_ai_api_key_calls_total", count, { key_type: keyType }),
+    ),
     "# HELP ielts_ai_tokens_total Total AI tokens reported by the provider.",
     "# TYPE ielts_ai_tokens_total counter",
     metricLine("ielts_ai_tokens_total", metrics.aiTokensTotal),
+    "# HELP ielts_ai_api_key_tokens_total Total AI tokens reported by the provider by configured key type.",
+    "# TYPE ielts_ai_api_key_tokens_total counter",
+    ...Object.entries(metrics.aiTokensByKeyType).map(([keyType, count]) =>
+      metricLine("ielts_ai_api_key_tokens_total", count, { key_type: keyType }),
+    ),
     "# HELP ielts_distinct_vocab_total Number of distinct vocabulary words generated or searched.",
     "# TYPE ielts_distinct_vocab_total gauge",
     metricLine("ielts_distinct_vocab_total", metrics.distinctVocab.length),
@@ -855,6 +877,21 @@ function configuredAiApiKeys(env = process.env) {
   return [...new Set([env.AI_API_KEY, env.GEMINI_API_KEY_PAID].map((key) => String(key || "").trim()).filter(Boolean))];
 }
 
+function configuredAiApiKeyEntries(env = process.env) {
+  const entries = [
+    { key: String(env.AI_API_KEY || "").trim(), keyType: "primary" },
+    { key: String(env.GEMINI_API_KEY_PAID || "").trim(), keyType: "paid" },
+  ].filter((entry) => entry.key);
+  const seenKeys = new Set();
+  return entries.filter((entry) => {
+    if (seenKeys.has(entry.key)) {
+      return false;
+    }
+    seenKeys.add(entry.key);
+    return true;
+  });
+}
+
 function generationRequest(prompt, apiKey) {
   const modelFamily = ["ge", "mini"].join("");
   const defaultModel = `${modelFamily}-3.5-flash-lite`;
@@ -883,12 +920,12 @@ function generationRequest(prompt, apiKey) {
 }
 
 async function fetchGeneratedJson(prompt) {
-  const apiKeys = configuredAiApiKeys();
+  const apiKeys = configuredAiApiKeyEntries();
   let lastError;
 
-  for (const apiKey of apiKeys) {
+  for (const { key, keyType } of apiKeys) {
     try {
-      return await fetchGeneratedJsonWithKey(prompt, apiKey);
+      return await fetchGeneratedJsonWithKey(prompt, key, keyType);
     } catch (error) {
       lastError = error;
     }
@@ -897,7 +934,7 @@ async function fetchGeneratedJson(prompt) {
   throw lastError || new Error("AI_API_KEY or GEMINI_API_KEY_PAID is not configured.");
 }
 
-async function fetchGeneratedJsonWithKey(prompt, apiKey) {
+async function fetchGeneratedJsonWithKey(prompt, apiKey, keyType = "primary") {
   const { defaultModel, host, payload, requestedModel } = generationRequest(prompt, apiKey);
   let response = await fetchWithTimeout(`https://${host}/v1beta/models/${requestedModel}:generateContent`, payload);
 
@@ -910,7 +947,7 @@ async function fetchGeneratedJsonWithKey(prompt, apiKey) {
   }
 
   const data = await response.json();
-  recordAiUsage(data);
+  recordAiUsage(data, keyType);
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
   if (!text) {
     throw new Error("Generation service returned an empty response.");
@@ -2174,4 +2211,5 @@ module.exports = {
   fetchGeneratedJson,
   normalizeAccountPlan,
   planUsagePayload,
+  renderMetrics,
 };
