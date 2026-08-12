@@ -767,7 +767,7 @@ function allowAuthenticatedOrGuestQuota(quotaType) {
     try {
       const user = await readUserFromSession(req);
       if (user) {
-        req.user = { email: user.email, id: user.id };
+        req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
         return next();
       }
 
@@ -999,20 +999,20 @@ async function consumeFreeAccountLimit(userId, endpoint) {
       ),
       usage AS (
         SELECT
-          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 minute') AS minute_count,
-          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 hour') AS hour_count,
-          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day') AS day_count
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 minute')::integer AS minute_count,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 hour')::integer AS hour_count,
+          COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day')::integer AS day_count
         FROM free_account_usage_events, locked
-        WHERE user_id = $1
+        WHERE user_id = $1::bigint
           AND usage_type = 'request'
           AND created_at >= now() - interval '1 day'
       ),
       inserted AS (
         INSERT INTO free_account_usage_events (user_id, endpoint, usage_type, units)
-        SELECT $1, $5, 'request', 1
-        WHERE (SELECT minute_count FROM usage) < $2
-          AND (SELECT hour_count FROM usage) < $3
-          AND (SELECT day_count FROM usage) < $4
+        SELECT $1::bigint, $5::text, 'request', 1
+        WHERE (SELECT minute_count FROM usage) < $2::integer
+          AND (SELECT hour_count FROM usage) < $3::integer
+          AND (SELECT day_count FROM usage) < $4::integer
         RETURNING 1
       )
       SELECT
@@ -1042,16 +1042,16 @@ async function consumePaidPlanUsage(userId, plan, quotaType, units) {
       ),
       usage AS (
         SELECT
-          COALESCE(SUM(units), 0) AS used
+          COALESCE(SUM(units), 0)::integer AS used
         FROM free_account_usage_events, locked
-        WHERE user_id = $1
-          AND usage_type = $2
+        WHERE user_id = $1::bigint
+          AND usage_type = $2::text
           AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
       ),
       inserted AS (
         INSERT INTO free_account_usage_events (user_id, endpoint, usage_type, units)
-        SELECT $1, $3, $2, $4
-        WHERE (SELECT used FROM usage) + $4 <= $5
+        SELECT $1::bigint, $3::text, $2::text, $4::integer
+        WHERE (SELECT used FROM usage) + $4::integer <= $5::integer
         RETURNING 1
       )
       SELECT
