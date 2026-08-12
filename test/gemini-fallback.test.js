@@ -1,9 +1,11 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
 const test = require("node:test");
 
 process.env.METRICS_FILE = "/tmp/ielts-gemini-fallback-test-metrics.json";
+fs.rmSync(process.env.METRICS_FILE, { force: true });
 
-const { configuredAiApiKeys, fetchGeneratedJson } = require("../server");
+const { configuredAiApiKeys, fetchGeneratedJson, renderMetrics } = require("../server");
 
 function geminiResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -34,11 +36,17 @@ test("uses the paid Gemini key after the primary key returns an error", async (t
     }
     return geminiResponse({
       candidates: [{ content: { parts: [{ text: '{"translation":"fallback worked"}' }] } }],
+      usageMetadata: { totalTokenCount: 42 },
     });
   };
 
   assert.deepEqual(await fetchGeneratedJson("Translate this"), { translation: "fallback worked" });
   assert.deepEqual(usedKeys, ["primary-key", "paid-key"]);
+  const metrics = renderMetrics();
+  assert.match(metrics, /ielts_ai_api_key_calls_total\{key_type="primary"\} 0/);
+  assert.match(metrics, /ielts_ai_api_key_calls_total\{key_type="paid"\} 1/);
+  assert.match(metrics, /ielts_ai_api_key_tokens_total\{key_type="primary"\} 0/);
+  assert.match(metrics, /ielts_ai_api_key_tokens_total\{key_type="paid"\} 42/);
 });
 
 test("allows the paid key to be the only configured Gemini key", () => {
