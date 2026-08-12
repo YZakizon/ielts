@@ -224,23 +224,31 @@ async function sendPasswordResetEmail(email, resetUrl) {
 
   const transporter = nodemailer.createTransport({
     auth: smtpUser || smtpPassword ? { user: smtpUser, pass: smtpPassword } : undefined,
+    connectionTimeout: smtpTimeoutMs,
+    greetingTimeout: smtpTimeoutMs,
     host: smtpHost,
     port: smtpPort,
     secure: smtpPort === 465,
+    socketTimeout: smtpTimeoutMs,
   });
 
-  await transporter.sendMail({
-    from: smtpFrom,
-    to: email,
-    subject: "Reset your IELTS Study Hub password",
-    text: `Reset your password by opening this link:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you did not request it, ignore this email.`,
-    html: `
-      <p>Reset your password by opening this link:</p>
-      <p><a href="${resetUrl}">Reset password</a></p>
-      <p>This link expires in 1 hour. If you did not request it, ignore this email.</p>
-    `,
-  });
-  return true;
+  try {
+    await transporter.sendMail({
+      from: smtpFrom,
+      to: email,
+      subject: "Reset your IELTS Study Hub password",
+      text: `Reset your password by opening this link:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you did not request it, ignore this email.`,
+      html: `
+        <p>Reset your password by opening this link:</p>
+        <p><a href="${resetUrl}">Reset password</a></p>
+        <p>This link expires in 1 hour. If you did not request it, ignore this email.</p>
+      `,
+    });
+    return true;
+  } catch (error) {
+    console.warn(`Unable to send password reset email to ${email}: ${error.message}`);
+    return false;
+  }
 }
 
 function createSessionToken(email) {
@@ -382,7 +390,7 @@ async function findActiveUserByResetToken(token) {
 
   const result = await dbPool.query(
     `
-      SELECT id, email
+      SELECT id, email, email_verified_at
       FROM app_users
       WHERE
         password_reset_token_hash = $1
