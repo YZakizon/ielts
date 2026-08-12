@@ -987,6 +987,28 @@ function showAuthPrompt(message = "") {
   loginEmail.focus();
 }
 
+function consumeAccessNotice() {
+  const params = new URLSearchParams(window.location.search);
+  const loginRequired = params.get("loginRequired");
+  const adminRequired = params.get("adminRequired");
+  if (!loginRequired && !adminRequired) {
+    return "";
+  }
+
+  params.delete("loginRequired");
+  params.delete("adminRequired");
+  const nextUrl = `${window.location.pathname}${params.toString() ? `?${params}` : ""}${window.location.hash}`;
+  history.replaceState(null, "", nextUrl || "/");
+
+  if (loginRequired === "not_configured") {
+    return "Account login is not configured on the server.";
+  }
+  if (adminRequired) {
+    return "Admin access required. Sign in with an admin account.";
+  }
+  return "Login required. Sign in to open the admin page.";
+}
+
 function handleUnauthorized() {
   showAuthPrompt("Free trial complete. Create an account or sign in.");
 }
@@ -1677,6 +1699,7 @@ async function logout() {
 }
 
 async function checkSession() {
+  const accessNotice = consumeAccessNotice();
   try {
     const session = await refreshSession();
     if (!session.configured) {
@@ -1687,10 +1710,16 @@ async function checkSession() {
 
     showApp();
     startApp();
+    if (accessNotice) {
+      showAuthPrompt(accessNotice);
+    }
   } catch {
     showApp();
     setLoginStatus("Could not check login status.", true);
     startApp();
+    if (accessNotice) {
+      showAuthPrompt(accessNotice);
+    }
   }
 }
 

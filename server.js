@@ -466,6 +466,27 @@ async function requireAdmin(req, res, next) {
   }
 }
 
+async function requireAdminPage(req, res, next) {
+  if (!authConfigured()) {
+    return res.redirect("/?loginRequired=not_configured");
+  }
+
+  try {
+    const user = await readUserFromSession(req);
+    if (!user) {
+      return res.redirect("/?loginRequired=1");
+    }
+    if (!isAdminUser(user)) {
+      return res.redirect("/?adminRequired=1");
+    }
+
+    req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
 function recordUniqueUser(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const userId =
@@ -1881,7 +1902,7 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.get("/admin", requireAdmin, (_req, res) => {
+app.get("/admin", requireAdminPage, (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
