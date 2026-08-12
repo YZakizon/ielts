@@ -1004,11 +1004,12 @@ async function consumeFreeAccountLimit(userId, endpoint) {
           COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day') AS day_count
         FROM free_account_usage_events, locked
         WHERE user_id = $1
+          AND usage_type = 'request'
           AND created_at >= now() - interval '1 day'
       ),
       inserted AS (
-        INSERT INTO free_account_usage_events (user_id, endpoint)
-        SELECT $1, $5
+        INSERT INTO free_account_usage_events (user_id, endpoint, usage_type, units)
+        SELECT $1, $5, 'request', 1
         WHERE (SELECT minute_count FROM usage) < $2
           AND (SELECT hour_count FROM usage) < $3
           AND (SELECT day_count FROM usage) < $4
@@ -1077,27 +1078,6 @@ async function reserveAuthenticatedUsage(req, res, quotaType, units) {
     return { allowed: true, recordSuccess: async () => true };
   }
 
-  if (plan === "free") {
-    const usage = await consumeFreeAccountLimit(req.user.id, req.originalUrl.split("?")[0]);
-    if (!usage.allowed) {
-      sendFreeAccountLimitExceeded(res, usage);
-      return { allowed: false, recordSuccess: async () => false };
-    }
-
-    const payload = freeAccountLimitPayload({
-      minute_count: Number(usage.minute_count || 0) + 1,
-      hour_count: Number(usage.hour_count || 0) + 1,
-      day_count: Number(usage.day_count || 0) + 1,
-    });
-    res.set("X-Free-Account-Minute-Remaining", String(payload.freeAccountMinuteRemaining));
-    res.set("X-Free-Account-Hour-Remaining", String(payload.freeAccountHourRemaining));
-    res.set("X-Free-Account-Day-Remaining", String(payload.freeAccountDayRemaining));
-    return {
-      allowed: true,
-      recordSuccess: async () => true,
-    };
-  }
-
   const usage = await getPlanUsageToday(req.user.id);
   const payload = planUsagePayload(plan, usage);
   const remaining = quotaType === "vocab" ? payload.vocabRemainingToday : payload.translationRemainingToday;
@@ -1107,6 +1087,23 @@ async function reserveAuthenticatedUsage(req, res, quotaType, units) {
   }
 
   setPlanUsageHeaders(res, payload);
+  if (plan === "free") {
+    const freeUsage = await consumeFreeAccountLimit(req.user.id, req.originalUrl.split("?")[0]);
+    if (!freeUsage.allowed) {
+      sendFreeAccountLimitExceeded(res, freeUsage);
+      return { allowed: false, recordSuccess: async () => false };
+    }
+
+    const freePayload = freeAccountLimitPayload({
+      minute_count: Number(freeUsage.minute_count || 0) + 1,
+      hour_count: Number(freeUsage.hour_count || 0) + 1,
+      day_count: Number(freeUsage.day_count || 0) + 1,
+    });
+    res.set("X-Free-Account-Minute-Remaining", String(freePayload.freeAccountMinuteRemaining));
+    res.set("X-Free-Account-Hour-Remaining", String(freePayload.freeAccountHourRemaining));
+    res.set("X-Free-Account-Day-Remaining", String(freePayload.freeAccountDayRemaining));
+  }
+
   return {
     allowed: true,
     recordSuccess: async (actualUnits = units) => {

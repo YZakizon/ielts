@@ -16,6 +16,8 @@ test("normalizes known account plans and falls back to free", () => {
 });
 
 test("uses configured Premium and Ultimate daily limits", () => {
+  assert.equal(dailyLimitForPlan("free", "vocab"), 50);
+  assert.equal(dailyLimitForPlan("free", "translation"), 50);
   assert.equal(dailyLimitForPlan("premium", "vocab"), 100);
   assert.equal(dailyLimitForPlan("premium", "translation"), 500);
   assert.equal(dailyLimitForPlan("ultimate", "vocab"), 500);
