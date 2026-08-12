@@ -28,14 +28,15 @@ const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 
 const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
 const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
-const signupRateLimitWindowMs = Number(process.env.SIGNUP_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const signupRateLimitWindowMs = Number(process.env.SIGNUP_RATE_LIMIT_WINDOW_MS || 10 * 60 * 1000);
 const signupRateLimitIpMax = Number(process.env.SIGNUP_RATE_LIMIT_IP_MAX || 10);
 const signupRateLimitEmailMax = Number(process.env.SIGNUP_RATE_LIMIT_EMAIL_MAX || 3);
-const signupRateLimitLockoutMs = Number(process.env.SIGNUP_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const signupRateLimitLockoutMs = Number(process.env.SIGNUP_RATE_LIMIT_LOCKOUT_MS || 5 * 60 * 1000);
 const passwordResetRateLimitWindowMs = Number(process.env.PASSWORD_RESET_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const passwordResetRateLimitIpMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT_IP_MAX || 5);
 const passwordResetRateLimitEmailMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT_EMAIL_MAX || 3);
 const passwordResetRateLimitLockoutMs = Number(process.env.PASSWORD_RESET_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const unverifiedAccountCleanupIntervalMs = 60 * 60 * 1000;
 const freeSessionLimit = Number(process.env.FREE_SESSION_LIMIT || 5);
 const freeVocabGenerationLimit = Number(process.env.FREE_VOCAB_GENERATION_LIMIT || 2);
 const adminUserLimit = Math.max(1, Math.min(Number(process.env.ADMIN_USER_LIMIT || 100) || 100, 500));
@@ -418,7 +419,8 @@ async function findActiveUserByResetToken(token) {
 
 async function readUserFromSession(req) {
   const session = readSession(req);
-  return session ? findActiveUser(session.email) : null;
+  const user = session ? await findActiveUser(session.email) : null;
+  return user?.email_verified_at ? user : null;
 }
 
 async function requireAuth(req, res, next) {
@@ -433,7 +435,10 @@ async function requireAuth(req, res, next) {
 
   try {
     const user = await findActiveUser(session.email);
-    if (!user) {
+    if (!user || !user.email_verified_at) {
+      if (user && !user.email_verified_at) {
+        clearSessionCookie(res);
+      }
       return res.status(401).json({ error: "Login required." });
     }
 
@@ -588,6 +593,11 @@ async function initializeDatabase() {
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_expires_at timestamptz");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'free'");
   await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS app_users_unverified_created_idx
+    ON app_users (created_at)
+    WHERE email_verified_at IS NULL
+  `);
+  await dbPool.query(`
     UPDATE app_users
     SET plan = 'free'
     WHERE plan IS NULL OR plan NOT IN ('free', 'premium', 'ultimate', 'admin')
@@ -649,6 +659,27 @@ async function initializeDatabase() {
   `);
 
   console.log("Login database initialized.");
+}
+
+async function deleteExpiredUnverifiedAccounts(email = null) {
+  if (!dbPool) return 0;
+
+  const result = email
+    ? await dbPool.query(
+        `
+          DELETE FROM app_users
+          WHERE email = $1
+            AND email_verified_at IS NULL
+            AND created_at < now() - interval '7 days'
+        `,
+        [normalizeEmail(email)],
+      )
+    : await dbPool.query(`
+        DELETE FROM app_users
+        WHERE email_verified_at IS NULL
+          AND created_at < now() - interval '7 days'
+      `);
+  return result.rowCount;
 }
 
 async function getGuestUsage(guestId) {
@@ -1573,6 +1604,7 @@ app.post("/api/signup", async (req, res, next) => {
 
   const client = await dbPool.connect();
   try {
+    await deleteExpiredUnverifiedAccounts(email);
     const passwordHash = await bcrypt.hash(password, 12);
     const verificationToken = randomBytes(32).toString("base64url");
     const verificationTokenHash = hashToken(verificationToken);
@@ -1593,8 +1625,18 @@ app.post("/api/signup", async (req, res, next) => {
     );
 
     if (!result.rows[0]) {
+      const existing = await client.query(
+        "SELECT email_verified_at FROM app_users WHERE email = $1 LIMIT 1",
+        [email],
+      );
       await client.query("ROLLBACK");
-      return res.status(409).json({ error: "Email is already registered." });
+      const canResendVerification = Boolean(existing.rows[0] && !existing.rows[0].email_verified_at);
+      return res.status(409).json({
+        error: canResendVerification
+          ? "Email is already registered but has not been verified."
+          : "Email is already registered.",
+        canResendVerification,
+      });
     }
 
     const verificationUrl = `${publicBaseUrl(req)}/api/verify-email?token=${encodeURIComponent(verificationToken)}`;
@@ -1606,9 +1648,8 @@ app.post("/api/signup", async (req, res, next) => {
     }
     await client.query("COMMIT");
 
-    setSessionCookie(req, res, email);
     res.status(201).json({
-      authenticated: true,
+      authenticated: false,
       email,
       isAdmin: false,
       verificationEmailSent: true,
@@ -1620,6 +1661,70 @@ app.post("/api/signup", async (req, res, next) => {
         error: "Account was not created because the verification email could not be sent.",
       });
     }
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/resend-verification", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const email = normalizeEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+
+  const signupKeys = signupRateLimitKeys(req, email);
+  const activeLockout = getActiveSignupLockout(signupKeys);
+  if (activeLockout) {
+    return sendSignupLockout(res, activeLockout);
+  }
+  const signupBucket = recordSignupAttempt(signupKeys);
+  if (signupBucket) {
+    return sendSignupLockout(res, signupBucket);
+  }
+
+  const client = await dbPool.connect();
+  try {
+    await deleteExpiredUnverifiedAccounts(email);
+    const verificationToken = randomBytes(32).toString("base64url");
+    const verificationTokenHash = hashToken(verificationToken);
+
+    await client.query("BEGIN");
+    const result = await client.query(
+      `
+        UPDATE app_users
+        SET
+          email_verification_token_hash = $1,
+          email_verification_expires_at = now() + interval '24 hours',
+          updated_at = now()
+        WHERE email = $2
+          AND email_verified_at IS NULL
+          AND created_at >= now() - interval '7 days'
+        RETURNING email
+      `,
+      [verificationTokenHash, email],
+    );
+
+    if (!result.rows[0]) {
+      await client.query("ROLLBACK");
+      return res.json({ message: "If an unverified account exists, a new verification link has been sent." });
+    }
+
+    const verificationUrl = `${publicBaseUrl(req)}/api/verify-email?token=${encodeURIComponent(verificationToken)}`;
+    const emailSent = await sendVerificationEmail(email, verificationUrl);
+    if (!emailSent) {
+      await client.query("ROLLBACK");
+      return res.status(502).json({ error: "Verification email could not be sent." });
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "A new verification link has been sent." });
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
     next(error);
   } finally {
     client.release();
@@ -1783,8 +1888,10 @@ app.post("/api/reset-password", async (req, res, next) => {
       [passwordHash, user.id],
     );
 
-    setSessionCookie(req, res, user.email);
-    res.json({ authenticated: true, email: user.email, isAdmin: isAdminUser(user) });
+    if (user.email_verified_at) {
+      setSessionCookie(req, res, user.email);
+    }
+    res.json({ authenticated: Boolean(user.email_verified_at), email: user.email, isAdmin: isAdminUser(user) });
   } catch (error) {
     next(error);
   }
@@ -1811,6 +1918,15 @@ app.post("/api/login", async (req, res, next) => {
         return sendLoginLockout(res, failedBucket);
       }
       return res.status(401).json({ error: "Invalid email or password." });
+    }
+
+    if (!user.email_verified_at) {
+      clearLoginRateLimit(loginKey);
+      clearSessionCookie(res);
+      return res.status(403).json({
+        error: "Verify your email address before logging in.",
+        canResendVerification: true,
+      });
     }
 
     clearLoginRateLimit(loginKey);
@@ -2154,7 +2270,20 @@ app.use((error, _req, res, _next) => {
 
 if (require.main === module) {
   initializeDatabase()
-    .then(() => {
+    .then(async () => {
+      const deletedAccounts = await deleteExpiredUnverifiedAccounts();
+      if (deletedAccounts) {
+        console.log(`Deleted ${deletedAccounts} expired unverified account(s).`);
+      }
+      const cleanupTimer = setInterval(() => {
+        deleteExpiredUnverifiedAccounts()
+          .then((deleted) => {
+            if (deleted) console.log(`Deleted ${deleted} expired unverified account(s).`);
+          })
+          .catch((error) => console.error(`Unable to clean up unverified accounts: ${error.message}`));
+      }, unverifiedAccountCleanupIntervalMs);
+      cleanupTimer.unref();
+
       app.listen(port, () => {
         console.log(`IELTS app listening on port ${port}`);
       });

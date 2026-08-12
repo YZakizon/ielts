@@ -47,7 +47,6 @@
         <div>
           <p class="eyebrow">Save your access</p>
           <h1 id="authHeading">Create an account</h1>
-          <p class="auth-copy">Keep using AI vocabulary and sentence translation after the free trial.</p>
         </div>
         <div class="auth-tabs" role="tablist" aria-label="Account mode">
           <button id="signupModeBtn" class="nav-button active" type="button" role="tab" aria-selected="true">Create account</button>
@@ -57,7 +56,7 @@
           <span>Email</span>
           <input id="loginEmail" name="email" type="email" autocomplete="email" required />
         </label>
-        <label for="loginPassword">
+        <label id="loginPasswordField" for="loginPassword">
           <span>Password</span>
           <span class="password-field">
             <input id="loginPassword" name="password" type="password" autocomplete="current-password" required />
@@ -70,6 +69,9 @@
           </span>
         </label>
         <button id="forgotPasswordBtn" class="forgot-password-button hidden" type="button">Forgot password?</button>
+        <button id="resendVerificationBtn" class="forgot-password-button hidden" type="button">
+          Send verification link again
+        </button>
         <div class="auth-actions">
           <button id="loginBtn" type="submit">Create account</button>
         </div>

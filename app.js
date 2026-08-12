@@ -706,8 +706,10 @@ const loginPage = document.querySelector("#loginPage");
 const loginForm = document.querySelector("#loginForm");
 const loginEmail = document.querySelector("#loginEmail");
 const loginPassword = document.querySelector("#loginPassword");
+const loginPasswordField = document.querySelector("#loginPasswordField");
 const togglePasswordBtn = document.querySelector("#togglePasswordBtn");
 const forgotPasswordBtn = document.querySelector("#forgotPasswordBtn");
+const resendVerificationBtn = document.querySelector("#resendVerificationBtn");
 const loginBtn = document.querySelector("#loginBtn");
 const loginStatus = document.querySelector("#loginStatus");
 const authHeading = document.querySelector("#authHeading");
@@ -1015,6 +1017,8 @@ function handleUnauthorized() {
 
 function setAuthMode(mode) {
   authMode = mode === "login" ? "login" : "signup";
+  loginPasswordField.classList.remove("hidden");
+  loginPassword.required = true;
   signupModeBtn.classList.toggle("active", authMode === "signup");
   loginModeBtn.classList.toggle("active", authMode === "login");
   signupModeBtn.setAttribute("aria-selected", String(authMode === "signup"));
@@ -1022,7 +1026,20 @@ function setAuthMode(mode) {
   authHeading.textContent = authMode === "signup" ? "Create an account" : "Welcome back";
   loginBtn.textContent = authMode === "signup" ? "Create account" : "Login";
   forgotPasswordBtn.classList.toggle("hidden", authMode !== "login");
+  resendVerificationBtn.classList.add("hidden");
   setLoginStatus("");
+}
+
+function setPasswordResetMode() {
+  authMode = "reset";
+  authHeading.textContent = "Reset password";
+  loginPasswordField.classList.add("hidden");
+  loginPassword.required = false;
+  forgotPasswordBtn.classList.add("hidden");
+  resendVerificationBtn.classList.add("hidden");
+  loginBtn.textContent = "Reset password";
+  setLoginStatus("");
+  loginEmail.focus();
 }
 
 function updateQuotaBanner(session = {}) {
@@ -1632,7 +1649,12 @@ function renderEmptyState() {
 
 async function login(event) {
   event.preventDefault();
+  if (authMode === "reset") {
+    await requestPasswordReset();
+    return;
+  }
   setLoginStatus(authMode === "signup" ? "Creating account..." : "Logging in...");
+  resendVerificationBtn.classList.add("hidden");
   loginBtn.disabled = true;
 
   try {
@@ -1646,18 +1668,20 @@ async function login(event) {
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
+      if (data.canResendVerification) {
+        resendVerificationBtn.classList.remove("hidden");
+      }
       throw new Error(data.error || "Login failed.");
     }
 
     setLoginStatus("");
     if (authMode === "signup") {
+      resendVerificationBtn.classList.remove("hidden");
       setLoginStatus(
         data.verificationEmailSent
           ? "Account created. Check your email to verify your address."
           : "Account created. Email delivery is not configured yet.",
       );
-      await refreshSession();
-      startApp();
       return;
     }
     showApp();
@@ -1670,6 +1694,34 @@ async function login(event) {
   }
 }
 
+async function resendVerification() {
+  const email = loginEmail.value.trim();
+  if (!email) {
+    setLoginStatus("Enter your email address first.", true);
+    loginEmail.focus();
+    return;
+  }
+
+  resendVerificationBtn.disabled = true;
+  setLoginStatus("Sending a new verification link...");
+  try {
+    const response = await fetch("/api/resend-verification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || "Verification email could not be sent.");
+    }
+    setLoginStatus(data.message || "A new verification link has been sent.");
+  } catch (error) {
+    setLoginStatus(error.message, true);
+  } finally {
+    resendVerificationBtn.disabled = false;
+  }
+}
+
 async function requestPasswordReset() {
   setLoginStatus("");
   const email = loginEmail.value.trim();
@@ -1679,7 +1731,7 @@ async function requestPasswordReset() {
     return;
   }
 
-  forgotPasswordBtn.disabled = true;
+  loginBtn.disabled = true;
   try {
     const response = await fetch("/api/forgot-password", {
       method: "POST",
@@ -1694,7 +1746,7 @@ async function requestPasswordReset() {
   } catch (error) {
     setLoginStatus(error.message, true);
   } finally {
-    forgotPasswordBtn.disabled = false;
+    loginBtn.disabled = false;
   }
 }
 
@@ -1796,7 +1848,9 @@ generateBtn.addEventListener("click", generateWords);
 loginForm.addEventListener("submit", login);
 signupModeBtn.addEventListener("click", () => setAuthMode("signup"));
 loginModeBtn.addEventListener("click", () => setAuthMode("login"));
-forgotPasswordBtn.addEventListener("click", requestPasswordReset);
+forgotPasswordBtn.addEventListener("click", setPasswordResetMode);
+resendVerificationBtn.addEventListener("click", resendVerification);
+loginEmail.addEventListener("input", () => resendVerificationBtn.classList.add("hidden"));
 togglePasswordBtn.addEventListener("click", () => {
   const shouldShow = loginPassword.type === "password";
   loginPassword.type = shouldShow ? "text" : "password";
