@@ -298,6 +298,65 @@ textarea {
   display: inline-grid;
 }
 
+.profile-button {
+  display: inline-grid;
+  min-height: 44px;
+  max-width: min(340px, 42vw);
+  grid-template-columns: 20px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+  text-align: left;
+}
+
+.profile-button:hover,
+.profile-button[aria-expanded="true"] {
+  border-color: rgba(31, 122, 99, 0.35);
+  background: #e9f4ef;
+  color: var(--accent-dark);
+}
+
+.profile-button svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.profile-button-text {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.profile-button-email,
+.profile-button-plan {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.profile-button-email {
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.profile-button-plan {
+  color: var(--accent-dark);
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
 .profile-menu {
   position: absolute;
   top: calc(100% + 8px);
@@ -1245,6 +1304,15 @@ button:hover {
   .site-nav {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .profile-menu-root,
+  .profile-button {
+    width: 100%;
+  }
+
+  .profile-button {
+    max-width: none;
   }
 
   .app-shell {
