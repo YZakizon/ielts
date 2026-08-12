@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin | IELTS Study Hub</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="/" aria-label="IELTS Study Hub home">
+        <span class="brand-mark">I</span>
+        <span>IELTS Study Hub</span>
+      </a>
+      <nav class="site-nav" aria-label="Admin navigation">
+        <a class="nav-link" href="/">Home</a>
+      </nav>
+    </header>
+
+    <main class="app-shell admin-shell">
+      <section class="admin-hero" aria-label="Admin users">
+        <div>
+          <p class="eyebrow">Admin</p>
+          <h1>Users and billing</h1>
+        </div>
+        <p id="adminStatus" class="admin-status" aria-live="polite">Loading users...</p>
+      </section>
+
+      <section class="panel admin-panel" aria-label="User billing table">
+        <div class="admin-table-header">
+          <span>User</span>
+          <span>Plan</span>
+          <span>Status</span>
+          <span>Joined</span>
+          <span aria-label="Actions"></span>
+        </div>
+        <div id="adminUsersList" class="admin-users-list"></div>
+      </section>
+    </main>
+
+    <script src="/admin.js"></script>
+  </body>
+</html>

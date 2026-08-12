@@ -24,6 +24,8 @@ SMTP_PORT=587
 SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM=
+STRIPE_SECRET_KEY=
+ADMIN_USER_LIMIT=100
 LOGIN_RATE_LIMIT_WINDOW_MS=900000
 LOGIN_RATE_LIMIT_MAX=5
 LOGIN_RATE_LIMIT_LOCKOUT_MS=900000
@@ -36,6 +38,11 @@ FREE_ACCOUNT_LIMIT_PER_DAY=50
 
 `ADMIN_EMAILS` is a comma-separated list. Any signed-up user whose email is in
 that list is treated as an admin.
+Admins can open `/admin` to list registered users and display billing plans
+from Stripe by matching each user email to Stripe customers and subscriptions.
+Set `STRIPE_SECRET_KEY` to enable live billing lookup; without it, users appear
+as free or admin. Deleting a user from the admin page permanently removes the
+local app account only and does not cancel Stripe subscriptions.
 Failed login attempts are rate-limited by IP and email. Signup sends the email
 verification link through the configured SMTP server. Without SMTP, the app logs
 the verification link server-side for local development only.

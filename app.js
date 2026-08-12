@@ -707,6 +707,7 @@ const loginForm = document.querySelector("#loginForm");
 const loginEmail = document.querySelector("#loginEmail");
 const loginPassword = document.querySelector("#loginPassword");
 const togglePasswordBtn = document.querySelector("#togglePasswordBtn");
+const forgotPasswordBtn = document.querySelector("#forgotPasswordBtn");
 const loginBtn = document.querySelector("#loginBtn");
 const loginStatus = document.querySelector("#loginStatus");
 const authHeading = document.querySelector("#authHeading");
@@ -719,6 +720,7 @@ const accountBtn = document.querySelector("#accountBtn");
 const profileMenuRoot = document.querySelector("#profileMenuRoot");
 const profileBtn = document.querySelector("#profileBtn");
 const profileMenu = document.querySelector("#profileMenu");
+const profileMenuEmail = document.querySelector("#profileMenuEmail");
 const adminMenuLink = document.querySelector("#adminMenuLink");
 const logoutBtn = document.querySelector("#logoutBtn");
 const homePage = document.querySelector("#homePage");
@@ -996,6 +998,7 @@ function setAuthMode(mode) {
   loginModeBtn.setAttribute("aria-selected", String(authMode === "login"));
   authHeading.textContent = authMode === "signup" ? "Create an account" : "Welcome back";
   loginBtn.textContent = authMode === "signup" ? "Create account" : "Login";
+  forgotPasswordBtn.classList.toggle("hidden", authMode !== "login");
   setLoginStatus("");
 }
 
@@ -1004,6 +1007,7 @@ function updateQuotaBanner(session = {}) {
   accountBtn.classList.toggle("hidden", authenticated);
   profileMenuRoot.classList.toggle("hidden", !authenticated);
   adminMenuLink.classList.toggle("hidden", !session.isAdmin);
+  profileMenuEmail.textContent = authenticated ? session.email || "Signed in" : "";
   if (!authenticated) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");
@@ -1633,6 +1637,34 @@ async function login(event) {
   }
 }
 
+async function requestPasswordReset() {
+  setLoginStatus("");
+  const email = loginEmail.value.trim();
+  if (!email) {
+    setLoginStatus("Enter your email address first.", true);
+    loginEmail.focus();
+    return;
+  }
+
+  forgotPasswordBtn.disabled = true;
+  try {
+    const response = await fetch("/api/forgot-password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(data.error || "Password reset failed.");
+    }
+    setLoginStatus(data.message || "If an account exists for that email, a password reset link has been sent.");
+  } catch (error) {
+    setLoginStatus(error.message, true);
+  } finally {
+    forgotPasswordBtn.disabled = false;
+  }
+}
+
 async function logout() {
   await fetch("/api/logout", { method: "POST" }).catch(() => {});
   profileMenu.classList.add("hidden");
@@ -1724,6 +1756,7 @@ generateBtn.addEventListener("click", generateWords);
 loginForm.addEventListener("submit", login);
 signupModeBtn.addEventListener("click", () => setAuthMode("signup"));
 loginModeBtn.addEventListener("click", () => setAuthMode("login"));
+forgotPasswordBtn.addEventListener("click", requestPasswordReset);
 togglePasswordBtn.addEventListener("click", () => {
   const shouldShow = loginPassword.type === "password";
   loginPassword.type = shouldShow ? "text" : "password";

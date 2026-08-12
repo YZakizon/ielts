@@ -5,7 +5,7 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 RUN apk add --no-cache su-exec && npm install --omit=dev
 
-COPY index.html styles.css app.js server.js ./
+COPY index.html admin.html styles.css app.js admin.js server.js ./
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh && mkdir -p /data && chown -R node:node /app /data
 

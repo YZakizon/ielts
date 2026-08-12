@@ -5,6 +5,7 @@ const fs = require("fs");
 const nodemailer = require("nodemailer");
 const path = require("path");
 const { Pool } = require("pg");
+const Stripe = require("stripe");
 require("dotenv").config();
 
 const app = express();
@@ -22,13 +23,19 @@ const signupRateLimitWindowMs = Number(process.env.SIGNUP_RATE_LIMIT_WINDOW_MS |
 const signupRateLimitIpMax = Number(process.env.SIGNUP_RATE_LIMIT_IP_MAX || 10);
 const signupRateLimitEmailMax = Number(process.env.SIGNUP_RATE_LIMIT_EMAIL_MAX || 3);
 const signupRateLimitLockoutMs = Number(process.env.SIGNUP_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const passwordResetRateLimitWindowMs = Number(process.env.PASSWORD_RESET_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const passwordResetRateLimitIpMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT_IP_MAX || 5);
+const passwordResetRateLimitEmailMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT_EMAIL_MAX || 3);
+const passwordResetRateLimitLockoutMs = Number(process.env.PASSWORD_RESET_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
 const freeSessionLimit = Number(process.env.FREE_SESSION_LIMIT || 5);
 const freeVocabGenerationLimit = Number(process.env.FREE_VOCAB_GENERATION_LIMIT || 2);
+const adminUserLimit = Math.max(1, Math.min(Number(process.env.ADMIN_USER_LIMIT || 100) || 100, 500));
 const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
 const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const loginRateLimitBuckets = new Map();
 const signupRateLimitBuckets = new Map();
+const passwordResetRateLimitBuckets = new Map();
 const adminEmails = new Set(
   String(process.env.ADMIN_EMAILS || "")
     .split(",")
@@ -46,6 +53,7 @@ const smtpUser = process.env.SMTP_USER || "";
 const smtpPassword = process.env.SMTP_PASSWORD || "";
 const smtpFrom = process.env.SMTP_FROM || smtpUser;
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
+const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
 
 app.set("trust proxy", "loopback");
 
@@ -188,11 +196,39 @@ async function sendVerificationEmail(email, verificationUrl) {
     from: smtpFrom,
     to: email,
     subject: "Verify your IELTS Study Hub email",
-    text: `Verify your email address by opening this link:\n\n${verificationUrl}\n\nThis link expires in 24 hours.`,
+    text: `Thank you for signing up to our IELTS Website.\n\nVerify your email address by opening this link:\n\n${verificationUrl}\n\nThis link expires in 24 hours.`,
     html: `
+      <p>Thank you for signing up to our IELTS Website.</p>
       <p>Verify your email address by opening this link:</p>
       <p><a href="${verificationUrl}">Verify email</a></p>
       <p>This link expires in 24 hours.</p>
+    `,
+  });
+  return true;
+}
+
+async function sendPasswordResetEmail(email, resetUrl) {
+  if (!smtpConfigured()) {
+    console.warn(`SMTP is not configured. Password reset link for ${email}: ${resetUrl}`);
+    return false;
+  }
+
+  const transporter = nodemailer.createTransport({
+    auth: smtpUser || smtpPassword ? { user: smtpUser, pass: smtpPassword } : undefined,
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpPort === 465,
+  });
+
+  await transporter.sendMail({
+    from: smtpFrom,
+    to: email,
+    subject: "Reset your IELTS Study Hub password",
+    text: `Reset your password by opening this link:\n\n${resetUrl}\n\nThis link expires in 1 hour. If you did not request it, ignore this email.`,
+    html: `
+      <p>Reset your password by opening this link:</p>
+      <p><a href="${resetUrl}">Reset password</a></p>
+      <p>This link expires in 1 hour. If you did not request it, ignore this email.</p>
     `,
   });
   return true;
@@ -288,6 +324,13 @@ function validateAccountInput(email, password) {
   return "";
 }
 
+function validatePassword(password) {
+  if (String(password || "").length < 8) {
+    return "Password must be at least 8 characters.";
+  }
+  return "";
+}
+
 function ensureGuestId(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const guestId = uuidPattern.test(cookies[guestCookieName] || "")
@@ -323,6 +366,26 @@ async function findActiveUser(email) {
   return result.rows[0] || null;
 }
 
+async function findActiveUserByResetToken(token) {
+  if (!dbPool) {
+    return null;
+  }
+
+  const result = await dbPool.query(
+    `
+      SELECT id, email
+      FROM app_users
+      WHERE
+        password_reset_token_hash = $1
+        AND password_reset_expires_at > now()
+        AND is_active = true
+      LIMIT 1
+    `,
+    [hashToken(token)],
+  );
+  return result.rows[0] || null;
+}
+
 async function readUserFromSession(req) {
   const session = readSession(req);
   return session ? findActiveUser(session.email) : null;
@@ -345,6 +408,41 @@ async function requireAuth(req, res, next) {
     }
 
     req.session = session;
+    req.user = { email: user.email, id: user.id };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function requireAdmin(req, res, next) {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  try {
+    const user = await readUserFromSession(req);
+    if (!user) {
+      return res.status(401).json({ error: "Login required." });
+    }
+    if (!isAdminUser(user)) {
+      return res.status(403).json({ error: "Admin access required." });
+    }
+
+    req.user = { email: user.email, id: user.id };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function requireAdminPage(req, res, next) {
+  try {
+    const user = await readUserFromSession(req);
+    if (!user) {
+      return res.redirect("/");
+    }
+
     req.user = { email: user.email, id: user.id };
     next();
   } catch (error) {
@@ -424,6 +522,8 @@ async function initializeDatabase() {
       email_verified_at timestamptz,
       email_verification_token_hash text,
       email_verification_expires_at timestamptz,
+      password_reset_token_hash text,
+      password_reset_expires_at timestamptz,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
@@ -447,6 +547,8 @@ async function initializeDatabase() {
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verified_at timestamptz");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_token_hash text");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_token_hash text");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_expires_at timestamptz");
 
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS guest_usage (
@@ -832,6 +934,89 @@ async function enforceFreeAccountRateLimit(req, res) {
   return true;
 }
 
+function planFromSubscription(subscription) {
+  const price = subscription?.items?.data?.[0]?.price;
+  const product = price?.product;
+  const productName = typeof product === "object" ? product.name : "";
+  return productName || price?.nickname || price?.lookup_key || price?.id || "Paid";
+}
+
+async function lookupStripeBilling(email) {
+  if (!stripe) {
+    return {
+      plan: "Free",
+      billingStatus: "stripe_not_configured",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+    };
+  }
+
+  const customers = await stripe.customers.list({ email, limit: 10 });
+  for (const customer of customers.data) {
+    const subscriptions = await stripe.subscriptions.list({
+      customer: customer.id,
+      expand: ["data.items.data.price.product"],
+      limit: 10,
+      status: "all",
+    });
+    const subscription =
+      subscriptions.data.find((item) => ["active", "trialing"].includes(item.status)) ||
+      subscriptions.data.find((item) => ["past_due", "unpaid"].includes(item.status)) ||
+      subscriptions.data[0];
+
+    if (subscription) {
+      return {
+        plan: ["active", "trialing"].includes(subscription.status)
+          ? planFromSubscription(subscription)
+          : "Free",
+        billingStatus: subscription.status,
+        stripeCustomerId: customer.id,
+        stripeSubscriptionId: subscription.id,
+      };
+    }
+  }
+
+  return {
+    plan: "Free",
+    billingStatus: "none",
+    stripeCustomerId: customers.data[0]?.id || null,
+    stripeSubscriptionId: null,
+  };
+}
+
+async function adminUserPayload(row) {
+  const isAdmin = isAdminUser(row);
+  try {
+    const billing = await lookupStripeBilling(row.email);
+    return {
+      id: Number(row.id),
+      email: row.email,
+      isActive: row.is_active,
+      isAdmin,
+      emailVerified: Boolean(row.email_verified_at),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      ...billing,
+      plan: isAdmin && billing.plan === "Free" ? "Admin" : billing.plan,
+    };
+  } catch (error) {
+    return {
+      id: Number(row.id),
+      email: row.email,
+      isActive: row.is_active,
+      isAdmin,
+      emailVerified: Boolean(row.email_verified_at),
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      plan: isAdmin ? "Admin" : "Unknown",
+      billingStatus: "lookup_error",
+      stripeCustomerId: null,
+      stripeSubscriptionId: null,
+      billingError: error.message,
+    };
+  }
+}
+
 function loginRateLimitKey(req, email) {
   const ip = req.ip || req.socket.remoteAddress || "unknown";
   const normalizedEmail = String(email || "").trim().toLowerCase().slice(0, 254) || "empty";
@@ -844,6 +1029,15 @@ function signupRateLimitKeys(req, email) {
   return [
     { key: `ip:${ip}`, max: signupRateLimitIpMax },
     { key: `email:${ip}:${normalizedEmail}`, max: signupRateLimitEmailMax },
+  ];
+}
+
+function passwordResetRateLimitKeys(req, email) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const normalizedEmail = String(email || "").trim().toLowerCase().slice(0, 254) || "empty";
+  return [
+    { key: `ip:${ip}`, max: passwordResetRateLimitIpMax },
+    { key: `email:${ip}:${normalizedEmail}`, max: passwordResetRateLimitEmailMax },
   ];
 }
 
@@ -969,6 +1163,156 @@ function sendSignupLockout(res, bucket) {
   return res.status(429).json({ error: "Too many signup attempts. Please try again later." });
 }
 
+function prunePasswordResetRateLimitBuckets(now) {
+  if (passwordResetRateLimitBuckets.size <= 10000) {
+    return;
+  }
+
+  for (const [key, bucket] of passwordResetRateLimitBuckets.entries()) {
+    const windowExpired = now - bucket.firstAttemptAt >= passwordResetRateLimitWindowMs;
+    const lockoutExpired = !bucket.lockedUntil || now >= bucket.lockedUntil;
+    if (windowExpired && lockoutExpired) {
+      passwordResetRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function getActivePasswordResetLockout(keys) {
+  const now = Date.now();
+  prunePasswordResetRateLimitBuckets(now);
+
+  for (const { key } of keys) {
+    const bucket = passwordResetRateLimitBuckets.get(key);
+    if (!bucket) {
+      continue;
+    }
+
+    if (bucket.lockedUntil && now < bucket.lockedUntil) {
+      return bucket;
+    }
+
+    if (now - bucket.firstAttemptAt >= passwordResetRateLimitWindowMs) {
+      passwordResetRateLimitBuckets.delete(key);
+    }
+  }
+
+  return null;
+}
+
+function recordPasswordResetAttempt(keys) {
+  const now = Date.now();
+  let lockedBucket = null;
+
+  for (const { key, max } of keys) {
+    const bucket = passwordResetRateLimitBuckets.get(key);
+    const nextBucket =
+      bucket && now - bucket.firstAttemptAt < passwordResetRateLimitWindowMs
+        ? { ...bucket, attempts: bucket.attempts + 1 }
+        : { attempts: 1, firstAttemptAt: now, lockedUntil: 0 };
+
+    if (nextBucket.attempts >= max) {
+      nextBucket.lockedUntil = now + passwordResetRateLimitLockoutMs;
+      lockedBucket = lockedBucket || nextBucket;
+    }
+
+    passwordResetRateLimitBuckets.set(key, nextBucket);
+  }
+
+  return lockedBucket;
+}
+
+function sendPasswordResetLockout(res, bucket) {
+  res.set("Retry-After", String(Math.ceil((bucket.lockedUntil - Date.now()) / 1000)));
+  return res.status(429).json({ error: "Too many password reset attempts. Please try again later." });
+}
+
+function passwordResetRequestedPayload() {
+  return {
+    message: "If an account exists for that email, a password reset link has been sent.",
+  };
+}
+
+function renderPasswordResetPage(token) {
+  return `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Reset password</title>
+        <link rel="stylesheet" href="/styles.css" />
+      </head>
+      <body>
+        <main class="reset-page">
+          <form id="resetPasswordForm" class="login-panel">
+            <div>
+              <p class="eyebrow">Account recovery</p>
+              <h1>Reset password</h1>
+              <p class="auth-copy">Choose a new password for your IELTS Study Hub account.</p>
+            </div>
+            <label for="newPassword">
+              <span>New password</span>
+              <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <label for="confirmPassword">
+              <span>Confirm password</span>
+              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+            </label>
+            <div class="auth-actions">
+              <button id="resetPasswordBtn" type="submit">Reset password</button>
+            </div>
+            <p id="resetPasswordStatus" class="status-text" role="status"></p>
+          </form>
+        </main>
+        <script>
+          const resetToken = ${JSON.stringify(token)};
+          const form = document.querySelector("#resetPasswordForm");
+          const password = document.querySelector("#newPassword");
+          const confirmPassword = document.querySelector("#confirmPassword");
+          const statusText = document.querySelector("#resetPasswordStatus");
+          const button = document.querySelector("#resetPasswordBtn");
+
+          function setStatus(message, isError = false) {
+            statusText.textContent = message;
+            statusText.classList.toggle("error", isError);
+          }
+
+          form.addEventListener("submit", async (event) => {
+            event.preventDefault();
+            setStatus("");
+
+            if (password.value !== confirmPassword.value) {
+              setStatus("Passwords do not match.", true);
+              return;
+            }
+
+            button.disabled = true;
+            try {
+              const response = await fetch("/api/reset-password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token: resetToken, password: password.value }),
+              });
+              const data = await response.json().catch(() => ({}));
+              if (!response.ok) {
+                throw new Error(data.error || "Password reset failed.");
+              }
+              setStatus("Password updated. Opening IELTS Study Hub...");
+              window.setTimeout(() => {
+                window.location.href = "/";
+              }, 900);
+            } catch (error) {
+              setStatus(error.message, true);
+            } finally {
+              button.disabled = false;
+            }
+          });
+        </script>
+      </body>
+    </html>
+  `;
+}
+
 app.use(express.json({ limit: "32kb" }));
 app.get("/api/session", async (req, res, next) => {
   try {
@@ -1012,11 +1356,13 @@ app.post("/api/signup", async (req, res, next) => {
     return sendSignupLockout(res, signupBucket);
   }
 
+  const client = await dbPool.connect();
   try {
     const passwordHash = await bcrypt.hash(password, 12);
     const verificationToken = randomBytes(32).toString("base64url");
     const verificationTokenHash = hashToken(verificationToken);
-    const result = await dbPool.query(
+    await client.query("BEGIN");
+    const result = await client.query(
       `
         INSERT INTO app_users (
           email,
@@ -1032,21 +1378,36 @@ app.post("/api/signup", async (req, res, next) => {
     );
 
     if (!result.rows[0]) {
+      await client.query("ROLLBACK");
       return res.status(409).json({ error: "Email is already registered." });
     }
 
     const verificationUrl = `${publicBaseUrl(req)}/api/verify-email?token=${encodeURIComponent(verificationToken)}`;
     const emailSent = await sendVerificationEmail(email, verificationUrl);
+    if (!emailSent) {
+      const error = new Error("Verification email is not configured.");
+      error.code = "EMAIL_DELIVERY_FAILED";
+      throw error;
+    }
+    await client.query("COMMIT");
 
     setSessionCookie(req, res, email);
     res.status(201).json({
       authenticated: true,
       email,
       isAdmin: false,
-      verificationEmailSent: emailSent,
+      verificationEmailSent: true,
     });
   } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    if (error.code === "EMAIL_DELIVERY_FAILED" || error.code === "EENVELOPE" || error.command || error.responseCode) {
+      return res.status(502).json({
+        error: "Account was not created because the verification email could not be sent.",
+      });
+    }
     next(error);
+  } finally {
+    client.release();
   }
 });
 
@@ -1103,6 +1464,118 @@ app.get("/api/verify-email", async (req, res, next) => {
   }
 });
 
+app.post("/api/forgot-password", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const email = normalizeEmail(req.body?.email);
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+
+  const resetKeys = passwordResetRateLimitKeys(req, email);
+  const activeLockout = getActivePasswordResetLockout(resetKeys);
+  if (activeLockout) {
+    return sendPasswordResetLockout(res, activeLockout);
+  }
+
+  const resetBucket = recordPasswordResetAttempt(resetKeys);
+  if (resetBucket) {
+    return sendPasswordResetLockout(res, resetBucket);
+  }
+
+  try {
+    const user = await findActiveUser(email);
+    if (user) {
+      const resetToken = randomBytes(32).toString("base64url");
+      await dbPool.query(
+        `
+          UPDATE app_users
+          SET
+            password_reset_token_hash = $1,
+            password_reset_expires_at = now() + interval '1 hour',
+            updated_at = now()
+          WHERE id = $2
+        `,
+        [hashToken(resetToken), user.id],
+      );
+
+      const resetUrl = `${publicBaseUrl(req)}/reset-password?token=${encodeURIComponent(resetToken)}`;
+      await sendPasswordResetEmail(user.email, resetUrl);
+    }
+
+    res.json(passwordResetRequestedPayload());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/reset-password", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).send("Login is not configured.");
+  }
+
+  const token = String(req.query.token || "");
+  if (!token) {
+    return res.status(400).send("Password reset token is required.");
+  }
+
+  try {
+    const user = await findActiveUserByResetToken(token);
+    if (!user) {
+      return res.status(400).send("Password reset link is invalid or expired.");
+    }
+
+    res.type("html").send(renderPasswordResetPage(token));
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/reset-password", async (req, res, next) => {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+
+  const token = String(req.body?.token || "");
+  const password = String(req.body?.password || "");
+  const validationError = validatePassword(password);
+  if (!token) {
+    return res.status(400).json({ error: "Password reset token is required." });
+  }
+  if (validationError) {
+    return res.status(400).json({ error: validationError });
+  }
+
+  try {
+    const user = await findActiveUserByResetToken(token);
+    if (!user) {
+      return res.status(400).json({ error: "Password reset link is invalid or expired." });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    await dbPool.query(
+      `
+        UPDATE app_users
+        SET
+          password_hash = $1,
+          password_reset_token_hash = null,
+          password_reset_expires_at = null,
+          email_verified_at = COALESCE(email_verified_at, now()),
+          updated_at = now()
+        WHERE id = $2
+      `,
+      [passwordHash, user.id],
+    );
+
+    setSessionCookie(req, res, user.email);
+    res.json({ authenticated: true, email: user.email, isAdmin: isAdminUser({ ...user, email_verified_at: true }) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/login", async (req, res, next) => {
   if (!authConfigured()) {
     return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
@@ -1139,6 +1612,51 @@ app.post("/api/logout", (_req, res) => {
   res.json({ authenticated: false });
 });
 
+app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
+  try {
+    const result = await dbPool.query(
+      `
+        SELECT id, email, is_active, email_verified_at, created_at, updated_at
+        FROM app_users
+        ORDER BY created_at DESC
+        LIMIT $1
+      `,
+      [adminUserLimit],
+    );
+    const users = [];
+    for (const row of result.rows) {
+      users.push(await adminUserPayload(row));
+    }
+    res.json({
+      users,
+      stripeConfigured: Boolean(stripe),
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: "Invalid user id." });
+  }
+  if (userId === req.user.id) {
+    return res.status(400).json({ error: "You cannot delete your own admin account." });
+  }
+
+  try {
+    const result = await dbPool.query("DELETE FROM app_users WHERE id = $1 RETURNING id, email", [userId]);
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    res.json({ deleted: true, user: { id: Number(result.rows[0].id), email: result.rows[0].email } });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use("/api/vocab", allowAuthenticatedOrGuestQuota("vocab"));
 app.use("/api/search-vocab", allowAuthenticatedOrGuestQuota("vocab"));
 app.use("/api/translate-sentence", allowAuthenticatedOrGuestQuota("session"));
@@ -1153,7 +1671,11 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.get(["/app.js", "/styles.css"], (req, res) => {
+app.get("/admin", requireAdminPage, (_req, res) => {
+  res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+app.get(["/app.js", "/admin.js", "/styles.css"], (req, res) => {
   res.sendFile(path.join(__dirname, req.path));
 });
 
