@@ -1,6 +1,6 @@
 COMPOSE ?= docker compose
-HOSTNAME ?= $(shell hostname)
-COMPOSE_PROFILES ?= $(if $(filter td340,$(HOSTNAME)),td340,dev)
+COMPOSE_PROFILES_FROM_ENV := $(shell if [ -f .env ]; then sed -n 's/^COMPOSE_PROFILES[[:space:]]*=[[:space:]]*//p' .env | tail -n 1; fi)
+COMPOSE_PROFILES ?= $(if $(COMPOSE_PROFILES_FROM_ENV),$(COMPOSE_PROFILES_FROM_ENV),dev)
 comma := ,
 ACTIVE_PROFILES := $(subst $(comma), ,$(COMPOSE_PROFILES))
 SERVICE ?=
@@ -10,10 +10,10 @@ REMOTE_DIR ?= /home/yeffry/ielts
 
 .PHONY: docker-build-run docker-run docker-logs ensure-traefik-network deploy-td340 nginx-install-td340
 
-docker-build-run: ensure-traefik-network
+docker-build-run: $(if $(filter dev,$(ACTIVE_PROFILES)),ensure-traefik-network)
 	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) up --build -d
 
-docker-run: ensure-traefik-network
+docker-run: $(if $(filter dev,$(ACTIVE_PROFILES)),ensure-traefik-network)
 	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) up -d
 
 docker-logs:
