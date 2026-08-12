@@ -851,7 +851,11 @@ function renderMetrics() {
   return `${lines.join("\n")}\n`;
 }
 
-function generationRequest(prompt) {
+function configuredAiApiKeys(env = process.env) {
+  return [...new Set([env.AI_API_KEY, env.GEMINI_API_KEY_PAID].map((key) => String(key || "").trim()).filter(Boolean))];
+}
+
+function generationRequest(prompt, apiKey) {
   const modelFamily = ["ge", "mini"].join("");
   const defaultModel = `${modelFamily}-3.5-flash-lite`;
   const requestedModel = process.env.AI_MODEL || defaultModel;
@@ -860,7 +864,7 @@ function generationRequest(prompt) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "x-goog-api-key": process.env.AI_API_KEY,
+      "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
       contents: [
@@ -879,7 +883,22 @@ function generationRequest(prompt) {
 }
 
 async function fetchGeneratedJson(prompt) {
-  const { defaultModel, host, payload, requestedModel } = generationRequest(prompt);
+  const apiKeys = configuredAiApiKeys();
+  let lastError;
+
+  for (const apiKey of apiKeys) {
+    try {
+      return await fetchGeneratedJsonWithKey(prompt, apiKey);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError || new Error("AI_API_KEY or GEMINI_API_KEY_PAID is not configured.");
+}
+
+async function fetchGeneratedJsonWithKey(prompt, apiKey) {
+  const { defaultModel, host, payload, requestedModel } = generationRequest(prompt, apiKey);
   let response = await fetchWithTimeout(`https://${host}/v1beta/models/${requestedModel}:generateContent`, payload);
 
   if (response.status === 404 && requestedModel !== defaultModel) {
@@ -1923,8 +1942,8 @@ app.post("/api/vocab", async (req, res) => {
     return res.status(400).json({ error: "Invalid level, English variant, or target language." });
   }
 
-  if (!process.env.AI_API_KEY) {
-    return res.status(503).json({ error: "AI_API_KEY is not configured." });
+  if (configuredAiApiKeys().length === 0) {
+    return res.status(503).json({ error: "AI_API_KEY or GEMINI_API_KEY_PAID is not configured." });
   }
 
   const targetLabel = translationLanguageLabels[targetLanguage];
@@ -1985,8 +2004,8 @@ app.post("/api/search-vocab", async (req, res) => {
     return res.status(400).json({ error: "Invalid English variant or target language." });
   }
 
-  if (!process.env.AI_API_KEY) {
-    return res.status(503).json({ error: "AI_API_KEY is not configured." });
+  if (configuredAiApiKeys().length === 0) {
+    return res.status(503).json({ error: "AI_API_KEY or GEMINI_API_KEY_PAID is not configured." });
   }
 
   const targetLabel = translationLanguageLabels[targetLanguage];
@@ -2054,8 +2073,8 @@ app.post("/api/translate-sentence", async (req, res) => {
     return res.status(400).json({ error: "Target language must be English." });
   }
 
-  if (!process.env.AI_API_KEY) {
-    return res.status(503).json({ error: "AI_API_KEY is not configured." });
+  if (configuredAiApiKeys().length === 0) {
+    return res.status(503).json({ error: "AI_API_KEY or GEMINI_API_KEY_PAID is not configured." });
   }
 
   const sourceLabel = translationLanguageLabels[sourceLanguage];
@@ -2149,8 +2168,10 @@ if (require.main === module) {
 module.exports = {
   accountPlans,
   accountPlanLabel,
+  configuredAiApiKeys,
   dailyLimitForPlan,
   effectiveAccountPlan,
+  fetchGeneratedJson,
   normalizeAccountPlan,
   planUsagePayload,
 };
