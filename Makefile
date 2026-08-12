@@ -1,6 +1,9 @@
 COMPOSE ?= docker compose
 COMPOSE_PROFILES ?= dev
-SERVICE ?= ielts-dev
+comma := ,
+ACTIVE_PROFILES := $(subst $(comma), ,$(COMPOSE_PROFILES))
+SERVICE ?=
+LOG_SERVICES ?= $(if $(filter td340,$(ACTIVE_PROFILES)),ielts postgres,ielts-dev postgres-dev)
 SSH_HOST ?= td340
 REMOTE_DIR ?= /home/yeffry/ielts
 
@@ -13,7 +16,7 @@ docker-run: ensure-traefik-network
 	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) up -d
 
 docker-logs:
-	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) logs -f $(SERVICE)
+	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) logs -f $(if $(SERVICE),$(SERVICE),$(LOG_SERVICES))
 
 ensure-traefik-network:
 	docker network inspect traefik-proxy >/dev/null 2>&1 || docker network create traefik-proxy
