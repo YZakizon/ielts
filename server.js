@@ -45,6 +45,7 @@ const smtpPort = Number(process.env.SMTP_PORT || 587);
 const smtpUser = process.env.SMTP_USER || "";
 const smtpPassword = process.env.SMTP_PASSWORD || "";
 const smtpFrom = process.env.SMTP_FROM || smtpUser;
+const smtpTimeoutMs = Number(process.env.SMTP_TIMEOUT_MS || 5000);
 const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
 
 app.set("trust proxy", "loopback");
@@ -179,23 +180,31 @@ async function sendVerificationEmail(email, verificationUrl) {
 
   const transporter = nodemailer.createTransport({
     auth: smtpUser || smtpPassword ? { user: smtpUser, pass: smtpPassword } : undefined,
+    connectionTimeout: smtpTimeoutMs,
+    greetingTimeout: smtpTimeoutMs,
     host: smtpHost,
     port: smtpPort,
     secure: smtpPort === 465,
+    socketTimeout: smtpTimeoutMs,
   });
 
-  await transporter.sendMail({
-    from: smtpFrom,
-    to: email,
-    subject: "Verify your IELTS Study Hub email",
-    text: `Verify your email address by opening this link:\n\n${verificationUrl}\n\nThis link expires in 24 hours.`,
-    html: `
-      <p>Verify your email address by opening this link:</p>
-      <p><a href="${verificationUrl}">Verify email</a></p>
-      <p>This link expires in 24 hours.</p>
-    `,
-  });
-  return true;
+  try {
+    await transporter.sendMail({
+      from: smtpFrom,
+      to: email,
+      subject: "Verify your IELTS Study Hub email",
+      text: `Verify your email address by opening this link:\n\n${verificationUrl}\n\nThis link expires in 24 hours.`,
+      html: `
+        <p>Verify your email address by opening this link:</p>
+        <p><a href="${verificationUrl}">Verify email</a></p>
+        <p>This link expires in 24 hours.</p>
+      `,
+    });
+    return true;
+  } catch (error) {
+    console.warn(`Unable to send verification email to ${email}: ${error.message}`);
+    return false;
+  }
 }
 
 function createSessionToken(email) {
