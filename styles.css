@@ -1449,6 +1449,10 @@ button:hover {
     min-height: 170px;
   }
 
+  .translation-box.source-box {
+    min-height: 120px;
+  }
+
   .translation-box textarea {
     min-height: 0;
   }
