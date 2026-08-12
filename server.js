@@ -1530,11 +1530,27 @@ function renderPasswordResetPage(token) {
             </div>
             <label for="newPassword">
               <span>New password</span>
-              <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+              <span class="password-field">
+                <input id="newPassword" name="password" type="password" autocomplete="new-password" minlength="8" required />
+                <button class="password-toggle" type="button" data-password-toggle="newPassword" aria-label="Show new password">
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </span>
             </label>
             <label for="confirmPassword">
               <span>Confirm password</span>
-              <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+              <span class="password-field">
+                <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required />
+                <button class="password-toggle" type="button" data-password-toggle="confirmPassword" aria-label="Show confirm password">
+                  <svg aria-hidden="true" viewBox="0 0 24 24">
+                    <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6Z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                </button>
+              </span>
             </label>
             <div class="auth-actions">
               <button id="resetPasswordBtn" type="submit">Reset password</button>
@@ -1554,6 +1570,16 @@ function renderPasswordResetPage(token) {
             statusText.textContent = message;
             statusText.classList.toggle("error", isError);
           }
+
+          document.querySelectorAll("[data-password-toggle]").forEach((toggle) => {
+            toggle.addEventListener("click", () => {
+              const input = document.querySelector("#" + toggle.dataset.passwordToggle);
+              const shouldShow = input.type === "password";
+              input.type = shouldShow ? "text" : "password";
+              const fieldName = input === confirmPassword ? "confirm password" : "new password";
+              toggle.setAttribute("aria-label", (shouldShow ? "Hide " : "Show ") + fieldName);
+            });
+          });
 
           form.addEventListener("submit", async (event) => {
             event.preventDefault();
