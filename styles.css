@@ -1379,22 +1379,12 @@ button:hover {
     align-items: stretch;
   }
 
-  .language-controls {
-    grid-template-columns: 1fr;
-    justify-content: stretch;
-  }
-
-  .language-controls label,
-  .language-controls label:last-child {
-    justify-self: stretch;
-  }
-
   .translation-box {
-    min-height: 260px;
+    min-height: 170px;
   }
 
-  textarea {
-    min-height: 210px;
+  .translation-box textarea {
+    min-height: 0;
   }
 
   .ielts-feedback {
