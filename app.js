@@ -1099,6 +1099,17 @@ function showPage(pageName, shouldUpdateHash = true) {
   }
 }
 
+function pageFromHash() {
+  return window.location.hash.replace("#", "") || "home";
+}
+
+function navigateToPage(pageName, event) {
+  if (event) {
+    event.preventDefault();
+  }
+  showPage(pageName);
+}
+
 function normalizeGeneratedWords(words, level) {
   if (!Array.isArray(words)) {
     throw new Error("The generation service did not return a vocabulary array.");
@@ -1739,7 +1750,7 @@ function startApp() {
   }
   updateSentenceCount();
   updateTranslationLanguageLabels();
-  showPage(window.location.hash.replace("#", "") || "home", false);
+  showPage(pageFromHash(), false);
 }
 
 vocabList.addEventListener("click", (event) => {
@@ -1860,13 +1871,14 @@ clearHistoryBtn.addEventListener("click", () => {
 });
 vocabViewBtn.addEventListener("click", () => showView("vocab"));
 historyViewBtn.addEventListener("click", () => showView("history"));
-homePageBtn.addEventListener("click", () => showPage("home"));
-ieltsVocabPageBtn.addEventListener("click", () => showPage("ielts-vocab"));
-sentenceTranslationPageBtn.addEventListener("click", () => showPage("sentence-translation"));
+homePageBtn.addEventListener("click", (event) => navigateToPage("home", event));
+ieltsVocabPageBtn.addEventListener("click", (event) => navigateToPage("ielts-vocab", event));
+sentenceTranslationPageBtn.addEventListener("click", (event) => navigateToPage("sentence-translation", event));
 startVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
 featureVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
 startTranslationBtn.addEventListener("click", () => showPage("sentence-translation"));
 featureTranslationBtn.addEventListener("click", () => showPage("sentence-translation"));
+window.addEventListener("hashchange", () => showPage(pageFromHash(), false));
 searchBtn.addEventListener("click", searchVocabulary);
 searchInput.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
