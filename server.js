@@ -203,7 +203,6 @@ async function sendVerificationEmail(email, verificationUrl) {
     return true;
   } catch (error) {
     console.warn(`Unable to send verification email to ${email}: ${error.message}`);
-    console.warn(`Email verification link for ${email}: ${verificationUrl}`);
     return false;
   }
 }
