@@ -1,19 +1,23 @@
 COMPOSE ?= docker compose
-COMPOSE_PROFILES ?= dev
-SERVICE ?= ielts-dev
+COMPOSE_PROFILES_FROM_ENV := $(shell if [ -f .env ]; then sed -n 's/^COMPOSE_PROFILES[[:space:]]*=[[:space:]]*//p' .env | tail -n 1; fi)
+COMPOSE_PROFILES ?= $(if $(COMPOSE_PROFILES_FROM_ENV),$(COMPOSE_PROFILES_FROM_ENV),dev)
+comma := ,
+ACTIVE_PROFILES := $(subst $(comma), ,$(COMPOSE_PROFILES))
+SERVICE ?=
+LOG_SERVICES ?= $(if $(filter td340,$(ACTIVE_PROFILES)),ielts postgres,ielts-dev postgres-dev)
 SSH_HOST ?= td340
 REMOTE_DIR ?= /home/yeffry/ielts
 
 .PHONY: docker-build-run docker-run docker-logs ensure-traefik-network deploy-td340 nginx-install-td340
 
-docker-build-run: ensure-traefik-network
+docker-build-run: $(if $(filter dev,$(ACTIVE_PROFILES)),ensure-traefik-network)
 	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) up --build -d
 
-docker-run: ensure-traefik-network
+docker-run: $(if $(filter dev,$(ACTIVE_PROFILES)),ensure-traefik-network)
 	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) up -d
 
 docker-logs:
-	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) logs -f $(SERVICE)
+	COMPOSE_PROFILES=$(COMPOSE_PROFILES) $(COMPOSE) logs -f $(if $(SERVICE),$(SERVICE),$(LOG_SERVICES))
 
 ensure-traefik-network:
 	docker network inspect traefik-proxy >/dev/null 2>&1 || docker network create traefik-proxy
