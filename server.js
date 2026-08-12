@@ -301,6 +301,11 @@ function ensureGuestId(req, res) {
   return guestId;
 }
 
+function anonymousQuotaKey(req) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  return createHmac("sha256", sessionSecret).update(`anonymous:${ip}`).digest("hex");
+}
+
 async function findActiveUser(email) {
   if (!dbPool) {
     return null;
@@ -449,6 +454,16 @@ async function initializeDatabase() {
   `);
 
   await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS anonymous_usage (
+      subject_hash text PRIMARY KEY,
+      translation_sessions integer NOT NULL DEFAULT 0,
+      vocab_generations integer NOT NULL DEFAULT 0,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+
+  await dbPool.query(`
     CREATE TABLE IF NOT EXISTS free_account_usage_events (
       id bigserial PRIMARY KEY,
       user_id bigint NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
@@ -476,6 +491,35 @@ async function getGuestUsage(guestId) {
     [guestId],
   );
   return result.rows[0];
+}
+
+async function getAnonymousUsage(subjectHash) {
+  const result = await dbPool.query(
+    `
+      INSERT INTO anonymous_usage (subject_hash)
+      VALUES ($1)
+      ON CONFLICT (subject_hash) DO UPDATE SET updated_at = anonymous_usage.updated_at
+      RETURNING translation_sessions, vocab_generations
+    `,
+    [subjectHash],
+  );
+  return result.rows[0];
+}
+
+function maxQuotaUsage(...usages) {
+  return usages.reduce(
+    (maxUsage, usage = {}) => ({
+      translation_sessions: Math.max(
+        Number(maxUsage.translation_sessions || 0),
+        Number(usage.translation_sessions || 0),
+      ),
+      vocab_generations: Math.max(
+        Number(maxUsage.vocab_generations || 0),
+        Number(usage.vocab_generations || 0),
+      ),
+    }),
+    { translation_sessions: 0, vocab_generations: 0 },
+  );
 }
 
 function quotaPayload(usage = {}) {
@@ -512,6 +556,29 @@ async function consumeGuestQuota(req, res, quotaType) {
   };
 }
 
+async function consumeAnonymousQuota(req, quotaType) {
+  const subjectHash = anonymousQuotaKey(req);
+  const column = quotaType === "vocab" ? "vocab_generations" : "translation_sessions";
+  const limit = quotaType === "vocab" ? freeVocabGenerationLimit : freeSessionLimit;
+  const result = await dbPool.query(
+    `
+      INSERT INTO anonymous_usage (subject_hash, ${column})
+      VALUES ($1, 1)
+      ON CONFLICT (subject_hash) DO UPDATE SET
+        ${column} = anonymous_usage.${column} + 1,
+        updated_at = now()
+      WHERE anonymous_usage.${column} < $2
+      RETURNING translation_sessions, vocab_generations
+    `,
+    [subjectHash, limit],
+  );
+
+  return {
+    allowed: Boolean(result.rows[0]),
+    usage: result.rows[0] || (await getAnonymousUsage(subjectHash)),
+  };
+}
+
 function sendQuotaExceeded(res, usage) {
   return res.status(402).json({
     error: "Free limit reached. Create an account or login to continue.",
@@ -534,14 +601,16 @@ function allowAuthenticatedOrGuestQuota(quotaType) {
       }
 
       const guestId = ensureGuestId(req, res);
-      const usage = await getGuestUsage(guestId);
-      const payload = quotaPayload(usage);
+      const guestUsage = await getGuestUsage(guestId);
+      const anonymousUsage = await getAnonymousUsage(anonymousQuotaKey(req));
+      const effectiveUsage = maxQuotaUsage(guestUsage, anonymousUsage);
+      const payload = quotaPayload(effectiveUsage);
       const remaining =
         quotaType === "vocab"
           ? payload.freeVocabGenerationsRemaining
           : payload.freeSessionsRemaining;
       if (remaining <= 0) {
-        return sendQuotaExceeded(res, usage);
+        return sendQuotaExceeded(res, effectiveUsage);
       }
 
       req.guestQuotaType = quotaType;
@@ -557,8 +626,9 @@ async function recordGuestQuota(req, res) {
     return;
   }
 
-  const { usage } = await consumeGuestQuota(req, res, req.guestQuotaType);
-  const payload = quotaPayload(usage);
+  const guestQuota = await consumeGuestQuota(req, res, req.guestQuotaType);
+  const anonymousQuota = await consumeAnonymousQuota(req, req.guestQuotaType);
+  const payload = quotaPayload(maxQuotaUsage(guestQuota.usage, anonymousQuota.usage));
   res.set("X-Free-Sessions-Remaining", String(payload.freeSessionsRemaining));
   res.set("X-Free-Vocab-Generations-Remaining", String(payload.freeVocabGenerationsRemaining));
 }
@@ -822,7 +892,9 @@ app.get("/api/session", async (req, res, next) => {
   try {
     const user = await readUserFromSession(req);
     const guestId = ensureGuestId(req, res);
-    const usage = dbPool ? await getGuestUsage(guestId) : {};
+    const usage = dbPool
+      ? maxQuotaUsage(await getGuestUsage(guestId), await getAnonymousUsage(anonymousQuotaKey(req)))
+      : {};
     res.json({
       authenticated: Boolean(user),
       configured: authConfigured(),

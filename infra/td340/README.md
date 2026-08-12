@@ -41,7 +41,9 @@ verification link through the configured SMTP server. Without SMTP, the app logs
 the verification link server-side for local development only.
 Anonymous visitors can use up to `FREE_SESSION_LIMIT` sentence translations and
 `FREE_VOCAB_GENERATION_LIMIT` AI vocabulary generations before creating an
-account or logging in.
+account or logging in. The anonymous trial is enforced by both the guest cookie
+and a server-side hashed requester-IP quota, so clearing cookies does not reset
+AI access.
 Logged-in free accounts can make up to `FREE_ACCOUNT_LIMIT_PER_MINUTE` combined
 AI requests per minute, `FREE_ACCOUNT_LIMIT_PER_HOUR` per hour, and
 `FREE_ACCOUNT_LIMIT_PER_DAY` per day across vocabulary generation, vocabulary
