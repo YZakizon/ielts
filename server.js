@@ -1,4 +1,5 @@
 const express = require("express");
+require("dotenv").config();
 const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("crypto");
 const bcrypt = require("bcryptjs");
 const fs = require("fs");
@@ -6,7 +7,15 @@ const nodemailer = require("nodemailer");
 const path = require("path");
 const { Pool } = require("pg");
 const Stripe = require("stripe");
-require("dotenv").config();
+const {
+  accountPlans,
+  accountPlanLabel,
+  dailyLimitForPlan,
+  effectiveAccountPlan: configuredEffectiveAccountPlan,
+  normalizeAccountPlan,
+  planUsagePayload,
+  validAccountPlans,
+} = require("./account-plans");
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -327,8 +336,12 @@ function isAdminEmail(email) {
   return adminEmails.has(normalizeEmail(email));
 }
 
+function effectiveAccountPlan(user) {
+  return configuredEffectiveAccountPlan(user, user?.email_verified_at && isAdminEmail(user.email));
+}
+
 function isAdminUser(user) {
-  return Boolean(user?.email_verified_at && isAdminEmail(user.email));
+  return Boolean(user?.email_verified_at && effectiveAccountPlan(user) === "admin");
 }
 
 function validateAccountInput(email, password) {
@@ -377,7 +390,7 @@ async function findActiveUser(email) {
   }
 
   const result = await dbPool.query(
-    "SELECT id, email, password_hash, email_verified_at FROM app_users WHERE email = $1 AND is_active = true LIMIT 1",
+    "SELECT id, email, password_hash, plan, email_verified_at FROM app_users WHERE email = $1 AND is_active = true LIMIT 1",
     [normalizeEmail(email)],
   );
   return result.rows[0] || null;
@@ -390,7 +403,7 @@ async function findActiveUserByResetToken(token) {
 
   const result = await dbPool.query(
     `
-      SELECT id, email, email_verified_at
+      SELECT id, email, plan, email_verified_at
       FROM app_users
       WHERE
         password_reset_token_hash = $1
@@ -425,7 +438,7 @@ async function requireAuth(req, res, next) {
     }
 
     req.session = session;
-    req.user = { email: user.email, id: user.id };
+    req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
     next();
   } catch (error) {
     next(error);
@@ -446,7 +459,28 @@ async function requireAdmin(req, res, next) {
       return res.status(403).json({ error: "Admin access required." });
     }
 
-    req.user = { email: user.email, id: user.id };
+    req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+async function requireAdminPage(req, res, next) {
+  if (!authConfigured()) {
+    return res.redirect("/?loginRequired=not_configured");
+  }
+
+  try {
+    const user = await readUserFromSession(req);
+    if (!user) {
+      return res.redirect("/?loginRequired=1");
+    }
+    if (!isAdminUser(user)) {
+      return res.redirect("/?adminRequired=1");
+    }
+
+    req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
     next();
   } catch (error) {
     next(error);
@@ -552,6 +586,27 @@ async function initializeDatabase() {
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_token_hash text");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_expires_at timestamptz");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'free'");
+  await dbPool.query(`
+    UPDATE app_users
+    SET plan = 'free'
+    WHERE plan IS NULL OR plan NOT IN ('free', 'premium', 'ultimate', 'admin')
+  `);
+  await dbPool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'app_users_plan_check'
+          AND conrelid = 'app_users'::regclass
+      ) THEN
+        ALTER TABLE app_users
+        ADD CONSTRAINT app_users_plan_check
+        CHECK (plan IN ('free', 'premium', 'ultimate', 'admin'));
+      END IF;
+    END $$;
+  `);
 
   await dbPool.query(`
     CREATE TABLE IF NOT EXISTS guest_usage (
@@ -585,6 +640,12 @@ async function initializeDatabase() {
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS free_account_usage_events_user_created_idx
     ON free_account_usage_events (user_id, created_at DESC)
+  `);
+  await dbPool.query("ALTER TABLE free_account_usage_events ADD COLUMN IF NOT EXISTS usage_type text NOT NULL DEFAULT 'request'");
+  await dbPool.query("ALTER TABLE free_account_usage_events ADD COLUMN IF NOT EXISTS units integer NOT NULL DEFAULT 1");
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS free_account_usage_events_user_type_created_idx
+    ON free_account_usage_events (user_id, usage_type, created_at DESC)
   `);
 
   console.log("Login database initialized.");
@@ -863,6 +924,56 @@ function freeAccountLimitPayload(counts = {}) {
   };
 }
 
+function usageTypeFromQuotaType(quotaType) {
+  return quotaType === "vocab" ? "vocab" : "translation";
+}
+
+async function getPlanUsageToday(userId) {
+  const result = await dbPool.query(
+    `
+      SELECT
+        COALESCE(SUM(units) FILTER (WHERE usage_type = 'vocab'), 0) AS vocab_used,
+        COALESCE(SUM(units) FILTER (WHERE usage_type = 'translation'), 0) AS translation_used
+      FROM free_account_usage_events
+      WHERE user_id = $1
+        AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+    `,
+    [userId],
+  );
+  return result.rows[0] || { vocab_used: 0, translation_used: 0 };
+}
+
+function setPlanUsageHeaders(res, payload) {
+  res.set("X-Account-Plan", payload.plan);
+  if (payload.vocabRemainingToday !== null) {
+    res.set("X-Plan-Vocab-Remaining", String(payload.vocabRemainingToday));
+  }
+  if (payload.translationRemainingToday !== null) {
+    res.set("X-Plan-Translation-Remaining", String(payload.translationRemainingToday));
+  }
+}
+
+function sendPlanLimitExceeded(res, plan, quotaType, usage) {
+  const payload = planUsagePayload(plan, usage);
+  const limit = dailyLimitForPlan(plan, quotaType);
+  const used = quotaType === "vocab" ? payload.vocabUsedToday : payload.translationUsedToday;
+  const remaining = quotaType === "vocab" ? payload.vocabRemainingToday : payload.translationRemainingToday;
+
+  res.set("Retry-After", String(24 * 60 * 60));
+  return res.status(429).json({
+    error:
+      quotaType === "vocab"
+        ? "Daily vocabulary limit reached for your plan."
+        : "Daily translation limit reached for your plan.",
+    code: "plan_limit_reached",
+    quotaType,
+    limit,
+    used,
+    remaining,
+    ...payload,
+  });
+}
+
 function sendFreeAccountLimitExceeded(res, counts) {
   const payload = freeAccountLimitPayload(counts);
   const retryAfter =
@@ -893,11 +1004,12 @@ async function consumeFreeAccountLimit(userId, endpoint) {
           COUNT(*) FILTER (WHERE created_at >= now() - interval '1 day') AS day_count
         FROM free_account_usage_events, locked
         WHERE user_id = $1
+          AND usage_type = 'request'
           AND created_at >= now() - interval '1 day'
       ),
       inserted AS (
-        INSERT INTO free_account_usage_events (user_id, endpoint)
-        SELECT $1, $5
+        INSERT INTO free_account_usage_events (user_id, endpoint, usage_type, units)
+        SELECT $1, $5, 'request', 1
         WHERE (SELECT minute_count FROM usage) < $2
           AND (SELECT hour_count FROM usage) < $3
           AND (SELECT day_count FROM usage) < $4
@@ -915,26 +1027,95 @@ async function consumeFreeAccountLimit(userId, endpoint) {
   return result.rows[0] || { allowed: false, minute_count: 0, hour_count: 0, day_count: 0 };
 }
 
-async function enforceFreeAccountRateLimit(req, res) {
+async function consumePaidPlanUsage(userId, plan, quotaType, units) {
+  const limit = dailyLimitForPlan(plan, quotaType);
+  if (limit === null) {
+    return { allowed: true, usage: await getPlanUsageToday(userId) };
+  }
+
+  const usageType = usageTypeFromQuotaType(quotaType);
+  await dbPool.query("DELETE FROM free_account_usage_events WHERE created_at < now() - interval '2 days'");
+  const result = await dbPool.query(
+    `
+      WITH locked AS (
+        SELECT pg_advisory_xact_lock($1::bigint)
+      ),
+      usage AS (
+        SELECT
+          COALESCE(SUM(units), 0) AS used
+        FROM free_account_usage_events, locked
+        WHERE user_id = $1
+          AND usage_type = $2
+          AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+      ),
+      inserted AS (
+        INSERT INTO free_account_usage_events (user_id, endpoint, usage_type, units)
+        SELECT $1, $3, $2, $4
+        WHERE (SELECT used FROM usage) + $4 <= $5
+        RETURNING 1
+      )
+      SELECT
+        usage.used,
+        EXISTS(SELECT 1 FROM inserted) AS allowed
+      FROM usage
+    `,
+    [userId, usageType, quotaType, units, limit],
+  );
+  const row = result.rows[0] || { allowed: false, used: 0 };
+  const usage = await getPlanUsageToday(userId);
+  return { allowed: Boolean(row.allowed), usage };
+}
+
+async function reserveAuthenticatedUsage(req, res, quotaType, units) {
   if (!req.user) {
-    return true;
+    return { allowed: true, recordSuccess: async () => true };
   }
 
-  const usage = await consumeFreeAccountLimit(req.user.id, req.originalUrl.split("?")[0]);
-  if (!usage.allowed) {
-    sendFreeAccountLimitExceeded(res, usage);
-    return false;
+  const plan = normalizeAccountPlan(req.user.plan);
+  if (plan === "admin") {
+    const payload = planUsagePayload(plan, await getPlanUsageToday(req.user.id));
+    setPlanUsageHeaders(res, payload);
+    return { allowed: true, recordSuccess: async () => true };
   }
 
-  const payload = freeAccountLimitPayload({
-    minute_count: Number(usage.minute_count || 0) + 1,
-    hour_count: Number(usage.hour_count || 0) + 1,
-    day_count: Number(usage.day_count || 0) + 1,
-  });
-  res.set("X-Free-Account-Minute-Remaining", String(payload.freeAccountMinuteRemaining));
-  res.set("X-Free-Account-Hour-Remaining", String(payload.freeAccountHourRemaining));
-  res.set("X-Free-Account-Day-Remaining", String(payload.freeAccountDayRemaining));
-  return true;
+  const usage = await getPlanUsageToday(req.user.id);
+  const payload = planUsagePayload(plan, usage);
+  const remaining = quotaType === "vocab" ? payload.vocabRemainingToday : payload.translationRemainingToday;
+  if (remaining !== null && remaining < units) {
+    sendPlanLimitExceeded(res, plan, quotaType, usage);
+    return { allowed: false, recordSuccess: async () => false };
+  }
+
+  setPlanUsageHeaders(res, payload);
+  if (plan === "free") {
+    const freeUsage = await consumeFreeAccountLimit(req.user.id, req.originalUrl.split("?")[0]);
+    if (!freeUsage.allowed) {
+      sendFreeAccountLimitExceeded(res, freeUsage);
+      return { allowed: false, recordSuccess: async () => false };
+    }
+
+    const freePayload = freeAccountLimitPayload({
+      minute_count: Number(freeUsage.minute_count || 0) + 1,
+      hour_count: Number(freeUsage.hour_count || 0) + 1,
+      day_count: Number(freeUsage.day_count || 0) + 1,
+    });
+    res.set("X-Free-Account-Minute-Remaining", String(freePayload.freeAccountMinuteRemaining));
+    res.set("X-Free-Account-Hour-Remaining", String(freePayload.freeAccountHourRemaining));
+    res.set("X-Free-Account-Day-Remaining", String(freePayload.freeAccountDayRemaining));
+  }
+
+  return {
+    allowed: true,
+    recordSuccess: async (actualUnits = units) => {
+      const result = await consumePaidPlanUsage(req.user.id, plan, quotaType, actualUnits);
+      if (!result.allowed) {
+        sendPlanLimitExceeded(res, plan, quotaType, result.usage);
+        return false;
+      }
+      setPlanUsageHeaders(res, planUsagePayload(plan, result.usage));
+      return true;
+    },
+  };
 }
 
 function planFromSubscription(subscription) {
@@ -989,6 +1170,7 @@ async function lookupStripeBilling(email) {
 
 async function adminUserPayload(row) {
   const isAdmin = isAdminUser(row);
+  const planKey = effectiveAccountPlan(row);
   try {
     const billing = await lookupStripeBilling(row.email);
     return {
@@ -1000,7 +1182,10 @@ async function adminUserPayload(row) {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...billing,
-      plan: isAdmin && billing.plan === "Free" ? "Admin" : billing.plan,
+      localPlan: normalizeAccountPlan(row.plan),
+      plan: planKey,
+      planLabel: accountPlanLabel(planKey),
+      billingPlan: billing.plan,
     };
   } catch (error) {
     return {
@@ -1011,7 +1196,10 @@ async function adminUserPayload(row) {
       emailVerified: Boolean(row.email_verified_at),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      plan: isAdmin ? "Admin" : "Unknown",
+      localPlan: normalizeAccountPlan(row.plan),
+      plan: planKey,
+      planLabel: accountPlanLabel(planKey),
+      billingPlan: "Unknown",
       billingStatus: "lookup_error",
       stripeCustomerId: null,
       stripeSubscriptionId: null,
@@ -1324,12 +1512,17 @@ app.get("/api/session", async (req, res, next) => {
     const usage = dbPool
       ? maxQuotaUsage(await getGuestUsage(guestId), await getAnonymousUsage(anonymousQuotaKey(req)))
       : {};
+    const plan = user ? effectiveAccountPlan(user) : null;
+    const planUsage = user && dbPool ? await getPlanUsageToday(user.id) : {};
     res.json({
       authenticated: Boolean(user),
       configured: authConfigured(),
       email: user?.email || null,
       isAdmin: isAdminUser(user),
       quota: quotaPayload(usage),
+      plan,
+      planLabel: plan ? accountPlanLabel(plan) : null,
+      planUsage: user ? planUsagePayload(plan, planUsage) : null,
     });
   } catch (error) {
     next(error);
@@ -1618,7 +1811,7 @@ app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
   try {
     const result = await dbPool.query(
       `
-        SELECT id, email, is_active, email_verified_at, created_at, updated_at
+        SELECT id, email, plan, is_active, email_verified_at, created_at, updated_at
         FROM app_users
         ORDER BY created_at DESC
         LIMIT $1
@@ -1633,6 +1826,39 @@ app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
       users,
       stripeConfigured: Boolean(stripe),
     });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.patch("/api/admin/users/:id/plan", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  const plan = normalizeAccountPlan(req.body?.plan);
+  if (!Number.isSafeInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: "Invalid user id." });
+  }
+  if (!validAccountPlans.has(String(req.body?.plan || "").trim().toLowerCase())) {
+    return res.status(400).json({ error: "Invalid plan." });
+  }
+  if (userId === Number(req.user.id) && !isAdminEmail(req.user.email) && plan !== "admin") {
+    return res.status(400).json({ error: "You cannot remove your own admin plan." });
+  }
+
+  try {
+    const result = await dbPool.query(
+      `
+        UPDATE app_users
+        SET plan = $1, updated_at = now()
+        WHERE id = $2
+        RETURNING id, email, plan, is_active, email_verified_at, created_at, updated_at
+      `,
+      [plan, userId],
+    );
+    if (!result.rows[0]) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    res.json({ user: await adminUserPayload(result.rows[0]) });
   } catch (error) {
     next(error);
   }
@@ -1673,7 +1899,7 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.get("/admin", requireAdmin, (_req, res) => {
+app.get("/admin", requireAdminPage, (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
@@ -1721,10 +1947,11 @@ Return only valid JSON with this shape:
   ]
 }
 Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markdown.
-`;
+  `;
 
   try {
-    if (!(await enforceFreeAccountRateLimit(req, res))) {
+    const usageReservation = await reserveAuthenticatedUsage(req, res, "vocab", 20);
+    if (!usageReservation.allowed) {
       return;
     }
 
@@ -1735,6 +1962,9 @@ Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markd
     }
 
     const words = generated.words.slice(0, 20);
+    if (!(await usageReservation.recordSuccess(words.length))) {
+      return;
+    }
     await recordGuestQuota(req, res);
     recordGeneratedWords(words);
     res.json({ words });
@@ -1776,16 +2006,20 @@ Return only valid JSON with this shape:
   "exampleTranslation": "${targetLabel} translation of the example sentence."
 }
 Use natural ${targetLabel} translations and no markdown.
-`;
+  `;
 
   try {
-    if (!(await enforceFreeAccountRateLimit(req, res))) {
+    const usageReservation = await reserveAuthenticatedUsage(req, res, "vocab", 1);
+    if (!usageReservation.allowed) {
       return;
     }
 
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.word) {
       return res.status(502).json({ error: "Generation service returned invalid data." });
+    }
+    if (!(await usageReservation.recordSuccess(1))) {
+      return;
     }
     await recordGuestQuota(req, res);
     recordGeneratedWords([generated]);
@@ -1867,16 +2101,20 @@ Return only valid JSON with this shape:
 }
 ${needsIeltsFeedback ? "Because the source language is English, provide concise correction and IELTS learner suggestions." : "Because the source language is not English, leave ieltsFeedback fields empty."}
 Use the Band 8-9 requirements for the ${targetLabel} translation while preserving the source meaning exactly. Use no markdown and no extra keys.
-`;
+  `;
 
   try {
-    if (!(await enforceFreeAccountRateLimit(req, res))) {
+    const usageReservation = await reserveAuthenticatedUsage(req, res, "translation", 1);
+    if (!usageReservation.allowed) {
       return;
     }
 
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.translation) {
       return res.status(502).json({ error: "AI service returned invalid translation data." });
+    }
+    if (!(await usageReservation.recordSuccess(1))) {
+      return;
     }
     await recordGuestQuota(req, res);
     recordSentenceTranslation();
@@ -1895,13 +2133,24 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ error: "Internal server error." });
 });
 
-initializeDatabase()
-  .then(() => {
-    app.listen(port, () => {
-      console.log(`IELTS app listening on port ${port}`);
+if (require.main === module) {
+  initializeDatabase()
+    .then(() => {
+      app.listen(port, () => {
+        console.log(`IELTS app listening on port ${port}`);
+      });
+    })
+    .catch((error) => {
+      console.error(`Unable to initialize Postgres login: ${error.message}`);
+      process.exit(1);
     });
-  })
-  .catch((error) => {
-    console.error(`Unable to initialize Postgres login: ${error.message}`);
-    process.exit(1);
-  });
+}
+
+module.exports = {
+  accountPlans,
+  accountPlanLabel,
+  dailyLimitForPlan,
+  effectiveAccountPlan,
+  normalizeAccountPlan,
+  planUsagePayload,
+};

@@ -1,5 +1,11 @@
 const adminStatus = document.querySelector("#adminStatus");
 const adminUsersList = document.querySelector("#adminUsersList");
+const accountPlanOptions = [
+  { value: "free", label: "Free" },
+  { value: "premium", label: "Premium" },
+  { value: "ultimate", label: "Ultimate" },
+  { value: "admin", label: "Admin" },
+];
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -39,6 +45,29 @@ function deleteIcon() {
   `;
 }
 
+function renderPlanSelect(user) {
+  const localPlan = String(user.localPlan || user.plan || "free").toLowerCase();
+  const options = accountPlanOptions
+    .map(
+      (plan) =>
+        `<option value="${escapeHtml(plan.value)}"${plan.value === localPlan ? " selected" : ""}>${escapeHtml(
+          plan.label,
+        )}</option>`,
+    )
+    .join("");
+
+  return `
+    <label class="admin-plan-control">
+      <span class="admin-plan">${escapeHtml(user.planLabel || user.plan || "Free")}</span>
+      <select data-plan-user-id="${escapeHtml(user.id)}" data-current-plan="${escapeHtml(localPlan)}" aria-label="Set plan for ${escapeHtml(
+        user.email,
+      )}">
+        ${options}
+      </select>
+    </label>
+  `;
+}
+
 function renderUsers(users) {
   if (!users.length) {
     adminUsersList.innerHTML = `<p class="history-empty">No users found.</p>`;
@@ -53,7 +82,7 @@ function renderUsers(users) {
             <strong>${escapeHtml(user.email)}</strong>
             <small>${user.isAdmin ? "Admin user" : user.emailVerified ? "Verified" : "Email not verified"}</small>
           </div>
-          <span class="admin-plan">${escapeHtml(user.plan)}</span>
+          ${renderPlanSelect(user)}
           <span>${escapeHtml(billingStatusLabel(user))}</span>
           <span>${escapeHtml(formatDate(user.createdAt))}</span>
           <button class="icon-button danger-icon-button" type="button" data-delete-user-id="${escapeHtml(
@@ -90,6 +119,28 @@ async function loadUsers() {
     : `${data.users?.length || 0} users · Stripe not configured`;
 }
 
+async function updateUserPlan(userId, plan, select) {
+  const previousPlan = select.dataset.currentPlan || "free";
+  select.disabled = true;
+  adminStatus.textContent = "Updating plan...";
+
+  try {
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/plan`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan }),
+    });
+    if (!response.ok) {
+      throw new Error(await responseErrorMessage(response, "Could not update plan."));
+    }
+    await loadUsers();
+  } catch (error) {
+    select.value = previousPlan;
+    select.disabled = false;
+    adminStatus.textContent = error.message;
+  }
+}
+
 async function deleteUser(userId, email) {
   if (!window.confirm(`Delete ${email}? This permanently removes the local account.`)) {
     return;
@@ -119,6 +170,12 @@ adminUsersList.addEventListener("click", (event) => {
   const row = button.closest(".admin-user-row");
   const email = row?.querySelector("strong")?.textContent || "this user";
   deleteUser(button.dataset.deleteUserId, email);
+});
+
+adminUsersList.addEventListener("change", (event) => {
+  const select = event.target.closest("[data-plan-user-id]");
+  if (!select) return;
+  updateUserPlan(select.dataset.planUserId, select.value, select);
 });
 
 loadUsers().catch((error) => {
