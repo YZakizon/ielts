@@ -5,6 +5,9 @@ only to `127.0.0.1:8091`, and host-managed Nginx proxies `ielts.appliva.io`
 to that loopback port over HTTPS. Run certbot separately before installing the
 HTTPS vhost if certificates are not already present.
 
+The repository uses one `docker-compose.yml` with profiles: `dev` is for local
+Traefik, and `td340` is for production Nginx.
+
 1. Create `/home/yeffry/ielts/.env` on `td340`:
 
 ```bash
@@ -36,6 +39,10 @@ FREE_ACCOUNT_LIMIT_PER_MINUTE=2
 FREE_ACCOUNT_LIMIT_PER_HOUR=20
 FREE_ACCOUNT_LIMIT_PER_DAY=50
 ```
+
+The `td340` Compose profile requires this `.env` and passes it into the app
+container; do not duplicate these app settings in `environment:` unless Compose
+must set a container-only constant.
 
 `ADMIN_EMAILS` is a comma-separated list. Any signed-up user whose email is in
 that list is treated as an admin.
@@ -72,7 +79,7 @@ make nginx-install-td340
 4. Verify:
 
 ```bash
-ssh td340 'docker compose -f /home/yeffry/ielts/docker-compose.td340.yml ps'
+ssh td340 'cd /home/yeffry/ielts && COMPOSE_PROFILES=td340 docker compose ps'
 curl -I https://ielts.appliva.io
 ```
 
