@@ -1111,25 +1111,10 @@ button:hover {
   box-shadow: var(--shadow);
 }
 
-.language-controls {
+.language-header-control {
   display: grid;
-  grid-column: 1 / -1;
-  grid-template-columns: repeat(2, minmax(170px, 210px));
-  justify-content: space-between;
-  column-gap: 8px;
-  row-gap: 10px;
-}
-
-.language-controls label {
-  display: grid;
+  width: min(210px, 100%);
   gap: 5px;
-  color: var(--muted);
-  font-size: 0.86rem;
-  font-weight: 850;
-}
-
-.language-controls label:last-child {
-  justify-self: end;
 }
 
 .translation-box {
@@ -1144,7 +1129,7 @@ button:hover {
 
 .box-header {
   display: flex;
-  min-height: 48px;
+  min-height: 72px;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -1153,6 +1138,13 @@ button:hover {
   color: var(--muted);
   font-size: 0.86rem;
   font-weight: 850;
+}
+
+.box-header select {
+  min-height: 36px;
+  padding: 6px 34px 6px 10px;
+  font-size: 0.92rem;
+  font-weight: 750;
 }
 
 .translation-box textarea {
@@ -1309,8 +1301,12 @@ button:hover {
     align-items: stretch;
   }
 
-  .language-controls {
-    grid-template-columns: 1fr;
+  .translation-box {
+    min-height: 170px;
+  }
+
+  .translation-box textarea {
+    min-height: 0;
   }
 
   .ielts-feedback {

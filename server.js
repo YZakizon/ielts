@@ -2038,8 +2038,8 @@ app.post("/api/translate-sentence", async (req, res) => {
     return res.status(400).json({ error: "Sentence text is required." });
   }
 
-  if (text.length > 800) {
-    return res.status(400).json({ error: "Sentence text must be 800 characters or fewer." });
+  if (text.length > 200) {
+    return res.status(400).json({ error: "Sentence text must be 200 characters or fewer." });
   }
 
   if (!translationLanguageLabels[sourceLanguage] || !translationLanguageLabels[targetLanguage]) {
