@@ -18,12 +18,17 @@ const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 
 const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
 const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
+const signupRateLimitWindowMs = Number(process.env.SIGNUP_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
+const signupRateLimitIpMax = Number(process.env.SIGNUP_RATE_LIMIT_IP_MAX || 10);
+const signupRateLimitEmailMax = Number(process.env.SIGNUP_RATE_LIMIT_EMAIL_MAX || 3);
+const signupRateLimitLockoutMs = Number(process.env.SIGNUP_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
 const freeSessionLimit = Number(process.env.FREE_SESSION_LIMIT || 5);
 const freeVocabGenerationLimit = Number(process.env.FREE_VOCAB_GENERATION_LIMIT || 2);
 const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
 const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const loginRateLimitBuckets = new Map();
+const signupRateLimitBuckets = new Map();
 const adminEmails = new Set(
   String(process.env.ADMIN_EMAILS || "")
     .split(",")
@@ -833,6 +838,15 @@ function loginRateLimitKey(req, email) {
   return `${ip}:${normalizedEmail}`;
 }
 
+function signupRateLimitKeys(req, email) {
+  const ip = req.ip || req.socket.remoteAddress || "unknown";
+  const normalizedEmail = String(email || "").trim().toLowerCase().slice(0, 254) || "empty";
+  return [
+    { key: `ip:${ip}`, max: signupRateLimitIpMax },
+    { key: `email:${ip}:${normalizedEmail}`, max: signupRateLimitEmailMax },
+  ];
+}
+
 function pruneLoginRateLimitBuckets(now) {
   if (loginRateLimitBuckets.size <= 10000) {
     return;
@@ -892,6 +906,69 @@ function sendLoginLockout(res, bucket) {
   return res.status(429).json({ error: "Too many login attempts. Please try again later." });
 }
 
+function pruneSignupRateLimitBuckets(now) {
+  if (signupRateLimitBuckets.size <= 10000) {
+    return;
+  }
+
+  for (const [key, bucket] of signupRateLimitBuckets.entries()) {
+    const windowExpired = now - bucket.firstAttemptAt >= signupRateLimitWindowMs;
+    const lockoutExpired = !bucket.lockedUntil || now >= bucket.lockedUntil;
+    if (windowExpired && lockoutExpired) {
+      signupRateLimitBuckets.delete(key);
+    }
+  }
+}
+
+function getActiveSignupLockout(keys) {
+  const now = Date.now();
+  pruneSignupRateLimitBuckets(now);
+
+  for (const { key } of keys) {
+    const bucket = signupRateLimitBuckets.get(key);
+    if (!bucket) {
+      continue;
+    }
+
+    if (bucket.lockedUntil && now < bucket.lockedUntil) {
+      return bucket;
+    }
+
+    if (now - bucket.firstAttemptAt >= signupRateLimitWindowMs) {
+      signupRateLimitBuckets.delete(key);
+    }
+  }
+
+  return null;
+}
+
+function recordSignupAttempt(keys) {
+  const now = Date.now();
+  let lockedBucket = null;
+
+  for (const { key, max } of keys) {
+    const bucket = signupRateLimitBuckets.get(key);
+    const nextBucket =
+      bucket && now - bucket.firstAttemptAt < signupRateLimitWindowMs
+        ? { ...bucket, attempts: bucket.attempts + 1 }
+        : { attempts: 1, firstAttemptAt: now, lockedUntil: 0 };
+
+    if (nextBucket.attempts >= max) {
+      nextBucket.lockedUntil = now + signupRateLimitLockoutMs;
+      lockedBucket = lockedBucket || nextBucket;
+    }
+
+    signupRateLimitBuckets.set(key, nextBucket);
+  }
+
+  return lockedBucket;
+}
+
+function sendSignupLockout(res, bucket) {
+  res.set("Retry-After", String(Math.ceil((bucket.lockedUntil - Date.now()) / 1000)));
+  return res.status(429).json({ error: "Too many signup attempts. Please try again later." });
+}
+
 app.use(express.json({ limit: "32kb" }));
 app.get("/api/session", async (req, res, next) => {
   try {
@@ -922,6 +999,17 @@ app.post("/api/signup", async (req, res, next) => {
   const validationError = validateAccountInput(email, password);
   if (validationError) {
     return res.status(400).json({ error: validationError });
+  }
+
+  const signupKeys = signupRateLimitKeys(req, email);
+  const activeLockout = getActiveSignupLockout(signupKeys);
+  if (activeLockout) {
+    return sendSignupLockout(res, activeLockout);
+  }
+
+  const signupBucket = recordSignupAttempt(signupKeys);
+  if (signupBucket) {
+    return sendSignupLockout(res, signupBucket);
   }
 
   try {
