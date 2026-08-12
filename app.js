@@ -721,6 +721,7 @@ const profileMenuRoot = document.querySelector("#profileMenuRoot");
 const profileBtn = document.querySelector("#profileBtn");
 const profileMenu = document.querySelector("#profileMenu");
 const profileMenuEmail = document.querySelector("#profileMenuEmail");
+const profileMenuPlan = document.querySelector("#profileMenuPlan");
 const adminMenuLink = document.querySelector("#adminMenuLink");
 const logoutBtn = document.querySelector("#logoutBtn");
 const homePage = document.querySelector("#homePage");
@@ -1008,6 +1009,7 @@ function updateQuotaBanner(session = {}) {
   profileMenuRoot.classList.toggle("hidden", !authenticated);
   adminMenuLink.classList.toggle("hidden", !session.isAdmin);
   profileMenuEmail.textContent = authenticated ? session.email || "Signed in" : "";
+  profileMenuPlan.textContent = authenticated && session.planLabel ? `${session.planLabel} plan` : "";
   if (!authenticated) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");

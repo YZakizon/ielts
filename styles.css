@@ -314,11 +314,18 @@ textarea {
 .profile-menu-email {
   max-width: 280px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
   color: var(--muted);
   font-size: 0.82rem;
   font-weight: 800;
   overflow-wrap: anywhere;
+}
+
+.profile-menu-plan {
+  padding: 0 12px 10px;
+  border-bottom: 1px solid var(--line);
+  color: var(--accent-dark);
+  font-size: 0.78rem;
+  font-weight: 900;
 }
 
 .profile-menu a,
@@ -805,7 +812,7 @@ button:hover {
 .admin-table-header,
 .admin-user-row {
   display: grid;
-  grid-template-columns: minmax(240px, 1.4fr) minmax(130px, 0.7fr) minmax(150px, 0.8fr) minmax(120px, 0.6fr) 48px;
+  grid-template-columns: minmax(240px, 1.35fr) minmax(170px, 0.85fr) minmax(150px, 0.75fr) minmax(120px, 0.55fr) 48px;
   align-items: center;
   gap: 12px;
 }
@@ -858,6 +865,24 @@ button:hover {
   font-size: 0.86rem;
   font-weight: 900;
   overflow-wrap: anywhere;
+}
+
+.admin-plan-control {
+  display: grid;
+  gap: 8px;
+}
+
+.admin-plan-control select {
+  width: min(100%, 150px);
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 800;
 }
 
 .danger-icon-button {
@@ -1314,7 +1339,8 @@ button:hover {
     align-items: start;
   }
 
-  .admin-user-row > span {
+  .admin-user-row > span,
+  .admin-user-row > label {
     grid-column: 1 / -1;
   }
 
