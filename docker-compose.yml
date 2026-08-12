@@ -1,25 +1,35 @@
-name: ielts-dev
+name: ielts
+
+x-postgres-env: &postgres-env
+  POSTGRES_DB: ${POSTGRES_DB:-ielts}
+  POSTGRES_USER: ${POSTGRES_USER:-ielts}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
+
+x-postgres-healthcheck: &postgres-healthcheck
+  test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+  interval: 5s
+  timeout: 5s
+  retries: 10
+
+x-app-env: &app-env
+  PORT: 8080
+  METRICS_FILE: /data/metrics.json
 
 services:
-  postgres:
+  postgres-dev:
+    profiles: ["dev"]
     image: postgres:16-alpine
     container_name: ielts-dev-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-ielts}
-      POSTGRES_USER: ${POSTGRES_USER:-ielts}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
+    environment: *postgres-env
+    healthcheck: *postgres-healthcheck
     volumes:
-      - ielts-postgres:/var/lib/postgresql/data
+      - ielts-dev-postgres:/var/lib/postgresql/data
     networks:
-      - ielts-internal
+      - ielts-dev-internal
     restart: unless-stopped
 
-  ielts:
+  ielts-dev:
+    profiles: ["dev"]
     build:
       context: .
     image: ielts:local
@@ -28,60 +38,63 @@ services:
       - path: .env
         required: false
     environment:
-      PORT: 8080
-      METRICS_FILE: /data/metrics.json
-      METRICS_TOKEN: ${METRICS_TOKEN:-}
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ielts}:${POSTGRES_PASSWORD:-ielts_password}@postgres:5432/${POSTGRES_DB:-ielts}}
+      <<: *app-env
+      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ielts}:${POSTGRES_PASSWORD:-ielts_password}@postgres-dev:5432/${POSTGRES_DB:-ielts}}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-capis2256@gmail.com,yeffry@appliva.io}
       SESSION_SECRET: ${SESSION_SECRET:-}
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
-      SMTP_FROM: ${SMTP_FROM:-}
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
-      ADMIN_USER_LIMIT: ${ADMIN_USER_LIMIT:-100}
-      SMTP_TIMEOUT_MS: ${SMTP_TIMEOUT_MS:-5000}
-      SESSION_DURATION_MS: ${SESSION_DURATION_MS:-43200000}
-      LOGIN_RATE_LIMIT_WINDOW_MS: ${LOGIN_RATE_LIMIT_WINDOW_MS:-900000}
-      LOGIN_RATE_LIMIT_MAX: ${LOGIN_RATE_LIMIT_MAX:-5}
-      LOGIN_RATE_LIMIT_LOCKOUT_MS: ${LOGIN_RATE_LIMIT_LOCKOUT_MS:-900000}
-      SIGNUP_RATE_LIMIT_WINDOW_MS: ${SIGNUP_RATE_LIMIT_WINDOW_MS:-900000}
-      SIGNUP_RATE_LIMIT_IP_MAX: ${SIGNUP_RATE_LIMIT_IP_MAX:-10}
-      SIGNUP_RATE_LIMIT_EMAIL_MAX: ${SIGNUP_RATE_LIMIT_EMAIL_MAX:-3}
-      SIGNUP_RATE_LIMIT_LOCKOUT_MS: ${SIGNUP_RATE_LIMIT_LOCKOUT_MS:-900000}
-      PASSWORD_RESET_RATE_LIMIT_WINDOW_MS: ${PASSWORD_RESET_RATE_LIMIT_WINDOW_MS:-900000}
-      PASSWORD_RESET_RATE_LIMIT_IP_MAX: ${PASSWORD_RESET_RATE_LIMIT_IP_MAX:-5}
-      PASSWORD_RESET_RATE_LIMIT_EMAIL_MAX: ${PASSWORD_RESET_RATE_LIMIT_EMAIL_MAX:-3}
-      PASSWORD_RESET_RATE_LIMIT_LOCKOUT_MS: ${PASSWORD_RESET_RATE_LIMIT_LOCKOUT_MS:-900000}
-      FREE_SESSION_LIMIT: ${FREE_SESSION_LIMIT:-5}
-      FREE_VOCAB_GENERATION_LIMIT: ${FREE_VOCAB_GENERATION_LIMIT:-2}
-      FREE_ACCOUNT_LIMIT_PER_MINUTE: ${FREE_ACCOUNT_LIMIT_PER_MINUTE:-2}
-      FREE_ACCOUNT_LIMIT_PER_HOUR: ${FREE_ACCOUNT_LIMIT_PER_HOUR:-20}
-      FREE_ACCOUNT_LIMIT_PER_DAY: ${FREE_ACCOUNT_LIMIT_PER_DAY:-50}
     volumes:
-      - ielts-metrics:/data
+      - ielts-dev-metrics:/data
     depends_on:
-      postgres:
+      postgres-dev:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      - "traefik.environment=dev"
       - "traefik.http.routers.ielts.rule=Host(`ielts.localhost`)"
       - "traefik.http.routers.ielts.entrypoints=web"
       - "traefik.http.services.ielts.loadbalancer.server.port=8080"
       - "traefik.docker.network=traefik-proxy"
     networks:
-      - ielts-internal
+      - ielts-dev-internal
       - traefik-proxy
     restart: unless-stopped
 
+  postgres:
+    profiles: ["td340"]
+    image: postgres:16-alpine
+    container_name: ielts-postgres
+    environment: *postgres-env
+    healthcheck: *postgres-healthcheck
+    volumes:
+      - ielts-postgres:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  ielts:
+    profiles: ["td340"]
+    build:
+      context: .
+    image: ielts:td340
+    container_name: ielts
+    env_file:
+      - path: .env
+        required: true
+    ports:
+      - "127.0.0.1:${IELTS_HOST_PORT:-8091}:8080"
+    environment: *app-env
+    volumes:
+      - ielts-metrics:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 networks:
-  ielts-internal:
+  ielts-dev-internal:
     driver: bridge
   traefik-proxy:
     external: true
 
 volumes:
+  ielts-dev-metrics:
+  ielts-dev-postgres:
   ielts-metrics:
   ielts-postgres:

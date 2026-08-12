@@ -3,7 +3,7 @@ set -euo pipefail
 
 SSH_HOST="${SSH_HOST:-td340}"
 REMOTE_DIR="${REMOTE_DIR:-/home/yeffry/ielts}"
-COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.td340.yml}"
+COMPOSE_PROFILES="${COMPOSE_PROFILES:-td340}"
 
 rsync -az --delete \
   --exclude ".env" \
@@ -18,4 +18,4 @@ if [ -f .env ] && ! ssh "${SSH_HOST}" "test -f '${REMOTE_DIR}/.env'"; then
   scp .env "${SSH_HOST}:${REMOTE_DIR}/.env"
 fi
 
-ssh "${SSH_HOST}" "cd '${REMOTE_DIR}' && test -f .env && docker compose -f '${COMPOSE_FILE}' up --build -d"
+ssh "${SSH_HOST}" "cd '${REMOTE_DIR}' && test -f .env && COMPOSE_PROFILES='${COMPOSE_PROFILES}' docker compose up --build -d"
