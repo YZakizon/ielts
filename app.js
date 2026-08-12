@@ -1363,10 +1363,8 @@ function updateSentenceCount() {
 }
 
 function updateTranslationLanguageLabels() {
-  sourceLanguageLabel.textContent =
-    translationLanguageLabels[sourceLanguageSelect.value] || "Source language";
-  targetLanguageLabel.textContent =
-    translationLanguageLabels[targetLanguageSelect.value] || "Target language";
+  sourceLanguageLabel.textContent = "Source language";
+  targetLanguageLabel.textContent = "Target language";
 }
 
 async function generateWords() {
