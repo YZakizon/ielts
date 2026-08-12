@@ -613,7 +613,20 @@ function allowAuthenticatedOrGuestQuota(quotaType) {
         return sendQuotaExceeded(res, effectiveUsage);
       }
 
-      req.guestQuotaType = quotaType;
+      const anonymousQuota = await consumeAnonymousQuota(req, quotaType);
+      if (!anonymousQuota.allowed) {
+        return sendQuotaExceeded(res, maxQuotaUsage(guestUsage, anonymousQuota.usage));
+      }
+
+      const guestQuota = await consumeGuestQuota(req, res, quotaType);
+      if (!guestQuota.allowed) {
+        return sendQuotaExceeded(res, maxQuotaUsage(guestQuota.usage, anonymousQuota.usage));
+      }
+
+      const reservedPayload = quotaPayload(maxQuotaUsage(guestQuota.usage, anonymousQuota.usage));
+      res.set("X-Free-Sessions-Remaining", String(reservedPayload.freeSessionsRemaining));
+      res.set("X-Free-Vocab-Generations-Remaining", String(reservedPayload.freeVocabGenerationsRemaining));
+      req.guestQuotaReserved = true;
       next();
     } catch (error) {
       next(error);
@@ -622,15 +635,7 @@ function allowAuthenticatedOrGuestQuota(quotaType) {
 }
 
 async function recordGuestQuota(req, res) {
-  if (!req.guestQuotaType || req.user) {
-    return;
-  }
-
-  const guestQuota = await consumeGuestQuota(req, res, req.guestQuotaType);
-  const anonymousQuota = await consumeAnonymousQuota(req, req.guestQuotaType);
-  const payload = quotaPayload(maxQuotaUsage(guestQuota.usage, anonymousQuota.usage));
-  res.set("X-Free-Sessions-Remaining", String(payload.freeSessionsRemaining));
-  res.set("X-Free-Vocab-Generations-Remaining", String(payload.freeVocabGenerationsRemaining));
+  return Boolean(req.guestQuotaReserved && !req.user && res);
 }
 
 function metricLine(name, value, labels = {}) {
