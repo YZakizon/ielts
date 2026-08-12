@@ -1599,7 +1599,7 @@ function renderEmptyState() {
 
 async function login(event) {
   event.preventDefault();
-  setLoginStatus("");
+  setLoginStatus(authMode === "signup" ? "Creating account..." : "Logging in...");
   loginBtn.disabled = true;
 
   try {
