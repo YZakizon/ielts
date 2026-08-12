@@ -49,6 +49,7 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
+      - "traefik.environment=dev"
       - "traefik.http.routers.ielts.rule=Host(`ielts.localhost`)"
       - "traefik.http.routers.ielts.entrypoints=web"
       - "traefik.http.services.ielts.loadbalancer.server.port=8080"
