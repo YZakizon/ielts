@@ -436,20 +436,6 @@ async function requireAdmin(req, res, next) {
   }
 }
 
-async function requireAdminPage(req, res, next) {
-  try {
-    const user = await readUserFromSession(req);
-    if (!user) {
-      return res.redirect("/");
-    }
-
-    req.user = { email: user.email, id: user.id };
-    next();
-  } catch (error) {
-    next(error);
-  }
-}
-
 function recordUniqueUser(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const userId =
@@ -1562,7 +1548,6 @@ app.post("/api/reset-password", async (req, res, next) => {
           password_hash = $1,
           password_reset_token_hash = null,
           password_reset_expires_at = null,
-          email_verified_at = COALESCE(email_verified_at, now()),
           updated_at = now()
         WHERE id = $2
       `,
@@ -1570,7 +1555,7 @@ app.post("/api/reset-password", async (req, res, next) => {
     );
 
     setSessionCookie(req, res, user.email);
-    res.json({ authenticated: true, email: user.email, isAdmin: isAdminUser({ ...user, email_verified_at: true }) });
+    res.json({ authenticated: true, email: user.email, isAdmin: isAdminUser(user) });
   } catch (error) {
     next(error);
   }
@@ -1671,7 +1656,7 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-app.get("/admin", requireAdminPage, (_req, res) => {
+app.get("/admin", requireAdmin, (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
 });
 
