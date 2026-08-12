@@ -299,39 +299,28 @@
             <h1>Translate IELTS practice sentences across languages.</h1>
           </div>
           <section class="translator-panel" aria-label="Sentence translator">
-            <div class="language-controls" aria-label="Translation languages">
-              <label>
-                <span>Source language</span>
-                <select id="sourceLanguageSelect">
-                  <option value="auto" selected>Detect language</option>
-                  <option value="english">English (US)</option>
-                  <option value="english-uk">English (UK)</option>
-                  <option value="english-au">English (AU)</option>
-                  <option value="indonesian">Bahasa Indonesia</option>
-                  <option value="spanish">Spanish</option>
-                  <option value="french">French</option>
-                  <option value="german">German</option>
-                  <option value="arabic">Arabic</option>
-                  <option value="chinese-simplified">Chinese Simplified</option>
-                  <option value="japanese">Japanese</option>
-                  <option value="korean">Korean</option>
-                </select>
-              </label>
-              <label>
-                <span>Target language</span>
-                <select id="targetLanguageSelect">
-                  <option value="english" selected>English (US)</option>
-                  <option value="english-uk">English (UK)</option>
-                  <option value="english-au">English (AU)</option>
-                </select>
-              </label>
-            </div>
             <div class="translation-box">
               <div class="box-header">
-                <label id="sourceLanguageLabel" for="sentenceInput">Detect language</label>
-                <span id="sentenceCount">0 / 800</span>
+                <label class="language-header-control" for="sourceLanguageSelect">
+                  <span id="sourceLanguageLabel">Source language</span>
+                  <select id="sourceLanguageSelect">
+                    <option value="auto" selected>Detect language</option>
+                    <option value="english">English (US)</option>
+                    <option value="english-uk">English (UK)</option>
+                    <option value="english-au">English (AU)</option>
+                    <option value="indonesian">Bahasa Indonesia</option>
+                    <option value="spanish">Spanish</option>
+                    <option value="french">French</option>
+                    <option value="german">German</option>
+                    <option value="arabic">Arabic</option>
+                    <option value="chinese-simplified">Chinese Simplified</option>
+                    <option value="japanese">Japanese</option>
+                    <option value="korean">Korean</option>
+                  </select>
+                </label>
+                <span id="sentenceCount">0 / 200</span>
               </div>
-              <textarea id="sentenceInput" rows="10" maxlength="800" placeholder="Type or paste a sentence here."></textarea>
+              <textarea id="sentenceInput" rows="10" maxlength="200" placeholder="Type or paste a sentence here."></textarea>
             </div>
             <div class="translation-actions">
               <button id="translateSentenceBtn" type="button">Translate</button>
@@ -339,7 +328,14 @@
             </div>
             <div class="translation-box result-box">
               <div class="box-header">
-                <span id="targetLanguageLabel">English (US)</span>
+                <label class="language-header-control" for="targetLanguageSelect">
+                  <span id="targetLanguageLabel">Target language</span>
+                  <select id="targetLanguageSelect">
+                    <option value="english" selected>English (US)</option>
+                    <option value="english-uk">English (UK)</option>
+                    <option value="english-au">English (AU)</option>
+                  </select>
+                </label>
                 <span id="translationStatus" role="status"></span>
               </div>
               <div id="translationOutput" class="translation-output empty-result">
