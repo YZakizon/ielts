@@ -78,8 +78,9 @@ const labels = {
 };
 
 const englishVariantLabels = {
-  us: "US English",
-  british: "British English",
+  us: "English (US)",
+  british: "English (UK)",
+  australian: "English (AU)",
 };
 
 const translationLanguageLabels = {
