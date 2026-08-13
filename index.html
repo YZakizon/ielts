@@ -72,6 +72,15 @@
         <button id="resendVerificationBtn" class="forgot-password-button hidden" type="button">
           Send verification link again
         </button>
+        <label id="termsAgreementField" class="terms-agreement" for="termsAgreement">
+          <input id="termsAgreement" name="acceptedTerms" type="checkbox" />
+          <span>
+            I agree to the
+            <a href="/terms" target="_blank" rel="noopener">Terms</a>
+            and
+            <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+          </span>
+        </label>
         <div class="auth-actions">
           <button id="loginBtn" type="submit">Create account</button>
         </div>
@@ -353,6 +362,13 @@
           </section>
         </section>
       </section>
+      <footer class="site-footer">
+        <span>Copyright 2026 Appliva LLC</span>
+        <nav class="legal-links" aria-label="Legal links">
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy Policy</a>
+        </nav>
+      </footer>
     </main>
 
     <script src="app.js"></script>
