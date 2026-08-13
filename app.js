@@ -731,9 +731,14 @@ const logoutBtn = document.querySelector("#logoutBtn");
 const homePage = document.querySelector("#homePage");
 const ieltsVocabPage = document.querySelector("#ieltsVocabPage");
 const sentenceTranslationPage = document.querySelector("#sentenceTranslationPage");
+const subscriptionPage = document.querySelector("#subscriptionPage");
 const homePageBtn = document.querySelector("#homePageBtn");
 const ieltsVocabPageBtn = document.querySelector("#ieltsVocabPageBtn");
 const sentenceTranslationPageBtn = document.querySelector("#sentenceTranslationPageBtn");
+const subscriptionPageBtn = document.querySelector("#subscriptionPageBtn");
+const subscriptionCurrent = document.querySelector("#subscriptionCurrent");
+const pricingGrid = document.querySelector("#pricingGrid");
+const billingStatus = document.querySelector("#billingStatus");
 const startVocabBtn = document.querySelector("#startVocabBtn");
 const startTranslationBtn = document.querySelector("#startTranslationBtn");
 const featureVocabBtn = document.querySelector("#featureVocabBtn");
@@ -766,6 +771,7 @@ let selectedWord = null;
 let currentWordIndex = 0;
 let historyWords = [];
 let generatedBatches = [];
+let currentSession = null;
 const historyStorageKey = "ielts-vocab-history";
 const generatedStorageKey = "ielts-vocab-generated-batches";
 const appStateStorageKey = "ielts-vocab-app-state";
@@ -1045,9 +1051,10 @@ function setPasswordResetMode() {
 }
 
 function updateQuotaBanner(session = {}) {
+  currentSession = session;
   const authenticated = Boolean(session.authenticated);
   const displayEmail = session.email || "Signed in";
-  const planLabel = session.planLabel || session.planUsage?.planLabel || "";
+  const planLabel = session.subscription?.planName || "No subscription";
   accountBtn.classList.toggle("hidden", authenticated);
   profileMenuRoot.classList.toggle("hidden", !authenticated);
   adminMenuLink.classList.toggle("hidden", !session.isAdmin);
@@ -1055,6 +1062,14 @@ function updateQuotaBanner(session = {}) {
   profileButtonPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
   profileMenuEmail.textContent = authenticated ? displayEmail : "";
   profileMenuPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
+  const hasSubscription = session.subscription?.status === "active";
+  generateBtn.disabled = authenticated && !hasSubscription;
+  searchBtn.disabled = authenticated && !hasSubscription;
+  translateSentenceBtn.disabled = authenticated && !hasSubscription;
+  if (authenticated && !hasSubscription) {
+    statusText.textContent = "An active Premium or Pro subscription is required for new translations.";
+    translationStatus.textContent = "Subscription required";
+  }
   if (!authenticated) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");
@@ -1083,8 +1098,8 @@ async function fetchJson(url, options = {}) {
 
 async function responseErrorMessage(response, fallback) {
   const data = await response.clone().json().catch(() => null);
-  if (data?.error) {
-    return data.error;
+  if (data?.message || data?.error) {
+    return data.message || data.error;
   }
   const text = await response.text().catch(() => "");
   return text || fallback;
@@ -1095,11 +1110,13 @@ function showPage(pageName, shouldUpdateHash = true) {
     home: homePage,
     "ielts-vocab": ieltsVocabPage,
     "sentence-translation": sentenceTranslationPage,
+    subscription: subscriptionPage,
   };
   const navMap = {
     home: homePageBtn,
     "ielts-vocab": ieltsVocabPageBtn,
     "sentence-translation": sentenceTranslationPageBtn,
+    subscription: subscriptionPageBtn,
   };
   const selectedPage = pageMap[pageName] ? pageName : "home";
 
@@ -1117,9 +1134,65 @@ function showPage(pageName, shouldUpdateHash = true) {
   if (selectedPage === "sentence-translation") {
     sentenceInput.focus();
   }
+  if (selectedPage === "subscription") {
+    loadSubscription().catch((error) => { billingStatus.textContent = error.message; });
+  }
   if (shouldUpdateHash) {
     history.replaceState(null, "", `#${selectedPage}`);
   }
+}
+
+function formatBillingDate(value) {
+  return value ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" }).format(new Date(value)) : "Never";
+}
+
+async function loadSubscription() {
+  billingStatus.textContent = "Loading subscription...";
+  const plansResponse = await fetch("/api/billing/plans");
+  if (!plansResponse.ok) throw new Error(await responseErrorMessage(plansResponse, "Could not load plans."));
+  const plans = (await plansResponse.json()).plans || [];
+  let subscription = { status: "none" };
+  if (currentSession?.authenticated) {
+    const response = await fetch("/api/billing/subscription");
+    if (response.ok) subscription = (await response.json()).subscription;
+  }
+  pricingGrid.innerHTML = plans.map((plan) => {
+    const action = subscription.source === "stripe" && subscription.plan === "premium" && plan.key === "pro"
+      ? "upgrade"
+      : subscription.source === "stripe" && subscription.plan === "pro" && plan.key === "premium"
+        ? "downgrade"
+        : "checkout";
+    const label = subscription.plan === plan.key ? "Current plan" : action === "upgrade" ? "Upgrade to Pro" : action === "downgrade" ? "Downgrade next period" : "Subscribe";
+    return `
+    <article class="pricing-plan${subscription.plan === plan.key ? " current-plan" : ""}">
+      <h2>${escapeHtml(plan.name)}</h2>
+      <div class="plan-quota"><strong>${Number(plan.vocabularyLimit).toLocaleString()}</strong><span>Vocabulary translations</span></div>
+      <div class="plan-quota"><strong>${Number(plan.sentenceLimit).toLocaleString()}</strong><span>Sentence translations</span></div>
+      <button type="button" data-subscribe-plan="${escapeHtml(plan.key)}" data-plan-action="${action}" ${!plan.monthlyAvailable || subscription.plan === plan.key ? "disabled" : ""}>${label}</button>
+    </article>`;
+  }).join("");
+  if (subscription.status === "active") {
+    const usage = subscription.usage;
+    subscriptionCurrent.classList.remove("hidden");
+    subscriptionCurrent.innerHTML = `
+      <div><p class="eyebrow">Current plan</p><h2>${escapeHtml(subscription.planName)}</h2><p>${escapeHtml(subscription.source === "admin" ? "Granted by administrator" : subscription.cancelAtPeriodEnd ? "Cancels at period end" : "Stripe subscription")}</p></div>
+      <div class="usage-meter"><span>Vocabulary</span><strong>${usage.vocabulary.used} / ${usage.vocabulary.limit}</strong><progress value="${usage.vocabulary.used}" max="${usage.vocabulary.limit}"></progress><small>${usage.vocabulary.remaining} remaining</small></div>
+      <div class="usage-meter"><span>Sentence</span><strong>${usage.sentence.used} / ${usage.sentence.limit}</strong><progress value="${usage.sentence.used}" max="${usage.sentence.limit}"></progress><small>${usage.sentence.remaining} remaining</small></div>
+      <div class="subscription-actions"><span>${subscription.source === "stripe" ? "Next renewal" : "Period ends"}: ${escapeHtml(formatBillingDate(subscription.periodEnd))}</span>${subscription.source === "stripe" ? `<button type="button" class="secondary-button" data-billing-action="portal">Manage subscription</button>` : ""}</div>`;
+  } else {
+    subscriptionCurrent.classList.add("hidden");
+    subscriptionCurrent.innerHTML = "";
+  }
+  billingStatus.textContent = currentSession?.authenticated ? "" : "Sign in to subscribe.";
+}
+
+async function billingPost(path, body) {
+  billingStatus.textContent = "Opening secure billing...";
+  const response = await fetchJson(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) });
+  if (!response.ok) throw new Error(await responseErrorMessage(response, "Billing request failed."));
+  const data = await response.json();
+  if (data.url) window.location.href = data.url;
+  else { billingStatus.textContent = data.message || "Billing request submitted."; await loadSubscription(); }
 }
 
 function pageFromHash() {
@@ -1193,6 +1266,7 @@ async function generateWithAi(level, variant, targetLanguage) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
     },
     body: JSON.stringify({ level, targetLanguage, variant }),
     signal: controller.signal,
@@ -1216,6 +1290,7 @@ async function searchWithAi(query, variant, targetLanguage) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
+      "Idempotency-Key": crypto.randomUUID(),
     },
     body: JSON.stringify({ query, targetLanguage, variant }),
     signal: controller.signal,
@@ -1286,6 +1361,7 @@ async function translateSentence() {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
       },
       body: JSON.stringify({
         sourceLanguage: sourceLanguageSelect.value,
@@ -1932,6 +2008,18 @@ historyViewBtn.addEventListener("click", () => showView("history"));
 homePageBtn.addEventListener("click", (event) => navigateToPage("home", event));
 ieltsVocabPageBtn.addEventListener("click", (event) => navigateToPage("ielts-vocab", event));
 sentenceTranslationPageBtn.addEventListener("click", (event) => navigateToPage("sentence-translation", event));
+subscriptionPageBtn.addEventListener("click", (event) => navigateToPage("subscription", event));
+subscriptionPage.addEventListener("click", (event) => {
+  const subscribe = event.target.closest("[data-subscribe-plan]");
+  const action = event.target.closest("[data-billing-action]");
+  if (subscribe) {
+    if (!currentSession?.authenticated) return showAuthPrompt("Sign in to choose a plan.");
+    const action = subscribe.dataset.planAction;
+    const endpoint = action === "upgrade" ? "/api/billing/upgrade" : action === "downgrade" ? "/api/billing/downgrade" : "/api/billing/checkout";
+    billingPost(endpoint, { plan: subscribe.dataset.subscribePlan, interval: "monthly" }).catch((error) => { billingStatus.textContent = error.message; });
+  }
+  if (action?.dataset.billingAction === "portal") billingPost("/api/billing/portal").catch((error) => { billingStatus.textContent = error.message; });
+});
 startVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
 featureVocabBtn.addEventListener("click", () => showPage("ielts-vocab"));
 startTranslationBtn.addEventListener("click", () => showPage("sentence-translation"));

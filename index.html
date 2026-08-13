@@ -88,6 +88,7 @@
         <a id="homePageBtn" class="nav-link active" href="#home">Home</a>
         <a id="ieltsVocabPageBtn" class="nav-link" href="#ielts-vocab">IELTS Vocab</a>
         <a id="sentenceTranslationPageBtn" class="nav-link" href="#sentence-translation">Sentence Translation</a>
+        <a id="subscriptionPageBtn" class="nav-link" href="#subscription">Plans</a>
         <button id="accountBtn" class="icon-button account-nav-button" type="button" aria-label="Account">
           <svg aria-hidden="true" viewBox="0 0 24 24">
             <path d="M20 21a8 8 0 0 0-16 0" />
@@ -108,6 +109,7 @@
           <div id="profileMenu" class="profile-menu hidden" role="menu">
             <div id="profileMenuEmail" class="profile-menu-email"></div>
             <div id="profileMenuPlan" class="profile-menu-plan"></div>
+            <a href="#subscription" role="menuitem">Subscription</a>
             <a id="adminMenuLink" class="hidden" href="/admin" role="menuitem">Admin</a>
             <button id="logoutBtn" type="button" role="menuitem">Logout</button>
           </div>
@@ -352,6 +354,17 @@
             <div id="translationNotes" class="translation-notes hidden"></div>
           </section>
         </section>
+      </section>
+
+      <section id="subscriptionPage" class="page-view hidden subscription-page" aria-label="Subscription and usage">
+        <header class="subscription-heading">
+          <p class="eyebrow">Subscription</p>
+          <h1>Choose your IELTS English plan</h1>
+          <p>Vocabulary and sentence allowances renew independently with each billing period.</p>
+        </header>
+        <div id="subscriptionCurrent" class="subscription-current hidden" aria-live="polite"></div>
+        <div id="pricingGrid" class="pricing-grid" aria-live="polite"></div>
+        <p id="billingStatus" class="status-text" role="status"></p>
       </section>
     </main>
 

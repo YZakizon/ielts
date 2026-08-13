@@ -1,10 +1,9 @@
 const adminStatus = document.querySelector("#adminStatus");
 const adminUsersList = document.querySelector("#adminUsersList");
 const accountPlanOptions = [
-  { value: "free", label: "Free" },
+  { value: "none", label: "No subscription" },
   { value: "premium", label: "Premium" },
-  { value: "ultimate", label: "Ultimate" },
-  { value: "admin", label: "Admin" },
+  { value: "pro", label: "Pro" },
 ];
 
 function escapeHtml(value) {
@@ -46,7 +45,7 @@ function deleteIcon() {
 }
 
 function renderPlanSelect(user) {
-  const localPlan = String(user.localPlan || user.plan || "free").toLowerCase();
+  const localPlan = String(user.subscription?.plan || "none").toLowerCase();
   const options = accountPlanOptions
     .map(
       (plan) =>
@@ -58,7 +57,7 @@ function renderPlanSelect(user) {
 
   return `
     <label class="admin-plan-control">
-      <span class="admin-plan">${escapeHtml(user.planLabel || user.plan || "Free")}</span>
+      <span class="admin-plan">${escapeHtml(user.planLabel || "No subscription")}</span>
       <select data-plan-user-id="${escapeHtml(user.id)}" data-current-plan="${escapeHtml(localPlan)}" aria-label="Set plan for ${escapeHtml(
         user.email,
       )}">
@@ -90,6 +89,19 @@ function renderUsers(users) {
           )}" aria-label="Delete ${escapeHtml(user.email)}">
             ${deleteIcon()}
           </button>
+          <details class="admin-subscription-details">
+            <summary>Subscription details</summary>
+            <div><span>Source</span><strong>${escapeHtml(user.subscription?.source || "None")}</strong></div>
+            <div><span>Expires</span><strong>${escapeHtml(user.subscription?.expiresAt ? formatDate(user.subscription.expiresAt) : "Never")}</strong></div>
+            <div><span>Vocabulary</span><strong>${user.subscription?.usage ? `${user.subscription.usage.vocabulary.used} / ${user.subscription.usage.vocabulary.limit}` : "Locked"}</strong></div>
+            <div><span>Sentence</span><strong>${user.subscription?.usage ? `${user.subscription.usage.sentence.used} / ${user.subscription.usage.sentence.limit}` : "Locked"}</strong></div>
+            <div class="admin-usage-actions">
+              <button type="button" class="ghost-button" data-adjust-usage="vocabulary_translation">Adjust vocabulary</button>
+              <button type="button" class="ghost-button" data-adjust-usage="sentence_translation">Adjust sentence</button>
+              <button type="button" class="ghost-button" data-view-usage>View history</button>
+            </div>
+            <div class="admin-usage-history" data-usage-history></div>
+          </details>
         </article>
       `,
     )
@@ -120,15 +132,19 @@ async function loadUsers() {
 }
 
 async function updateUserPlan(userId, plan, select) {
-  const previousPlan = select.dataset.currentPlan || "free";
+  const previousPlan = select.dataset.currentPlan || "none";
   select.disabled = true;
   adminStatus.textContent = "Updating plan...";
 
   try {
-    const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/plan`, {
-      method: "PATCH",
+    const reason = window.prompt(plan === "none" ? "Reason for removing access" : "Reason for granting this subscription");
+    if (reason === null || !reason.trim()) throw new Error("A reason is required.");
+    const expiration = plan === "none" ? "" : window.prompt("Expiration date (YYYY-MM-DD), or leave blank for permanent access", "");
+    if (expiration === null) throw new Error("Subscription update cancelled.");
+    const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/subscription`, {
+      method: plan === "none" ? "DELETE" : previousPlan === "none" ? "POST" : "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan }),
+      body: JSON.stringify({ plan, reason, expiresAt: expiration ? `${expiration}T23:59:59Z` : null }),
     });
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, "Could not update plan."));
@@ -163,7 +179,39 @@ async function deleteUser(userId, email) {
   }
 }
 
+async function adjustUsage(row, type) {
+  const amount = Number(window.prompt("Adjustment amount (positive adds usage, negative refunds usage)", "0"));
+  if (!Number.isSafeInteger(amount) || amount === 0) return;
+  const reason = window.prompt("Reason for this usage adjustment");
+  if (!reason?.trim()) return;
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(row.dataset.userId)}/usage-adjustment`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type, amount, reason }),
+  });
+  if (!response.ok) throw new Error(await responseErrorMessage(response, "Could not adjust usage."));
+  await loadUsers();
+}
+
+async function viewUsageHistory(row) {
+  const output = row.querySelector("[data-usage-history]");
+  output.textContent = "Loading history...";
+  const response = await fetch(`/api/admin/users/${encodeURIComponent(row.dataset.userId)}/usage`);
+  if (!response.ok) throw new Error(await responseErrorMessage(response, "Could not load usage history."));
+  const periods = (await response.json()).periods || [];
+  output.innerHTML = periods.length ? periods.map((period) => `<div><span>${escapeHtml(formatDate(period.period_start))} - ${escapeHtml(formatDate(period.period_end))}</span><strong>Vocabulary ${Number(period.vocabulary_used)} / ${Number(period.vocabulary_limit)}; Sentence ${Number(period.sentence_used)} / ${Number(period.sentence_limit)}</strong></div>`).join("") : "No usage periods yet.";
+}
+
 adminUsersList.addEventListener("click", (event) => {
+  const adjust = event.target.closest("[data-adjust-usage]");
+  const history = event.target.closest("[data-view-usage]");
+  const actionRow = event.target.closest(".admin-user-row");
+  if (adjust && actionRow) {
+    adjustUsage(actionRow, adjust.dataset.adjustUsage).catch((error) => { adminStatus.textContent = error.message; });
+    return;
+  }
+  if (history && actionRow) {
+    viewUsageHistory(actionRow).catch((error) => { adminStatus.textContent = error.message; });
+    return;
+  }
   const button = event.target.closest("[data-delete-user-id]");
   if (!button) return;
 

@@ -756,6 +756,139 @@ button:hover {
   display: none !important;
 }
 
+.subscription-page {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 48px 24px 72px;
+}
+
+.subscription-heading {
+  max-width: 680px;
+  margin-bottom: 28px;
+}
+
+.subscription-heading h1 {
+  font-size: 36px;
+  margin: 6px 0 10px;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.pricing-plan {
+  border: 1px solid var(--border, #d9dee7);
+  border-radius: 8px;
+  padding: 24px;
+  background: #fff;
+}
+
+.pricing-plan.current-plan {
+  border-color: #176b55;
+  box-shadow: inset 0 3px #176b55;
+}
+
+.plan-quota {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 12px 0;
+  border-bottom: 1px solid #e7e9ed;
+}
+
+.plan-quota strong {
+  font-size: 24px;
+}
+
+.pricing-plan button {
+  width: 100%;
+  margin-top: 20px;
+}
+
+.subscription-current {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1fr;
+  gap: 22px;
+  padding: 22px 0 28px;
+  margin-bottom: 28px;
+  border-top: 1px solid #d9dee7;
+  border-bottom: 1px solid #d9dee7;
+}
+
+.usage-meter {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+}
+
+.usage-meter progress,
+.usage-meter small {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.subscription-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.admin-subscription-details {
+  grid-column: 1 / -1;
+  padding: 10px 0 4px;
+}
+
+.admin-subscription-details > div {
+  display: flex;
+  justify-content: space-between;
+  max-width: 520px;
+  padding: 5px 0;
+}
+
+.admin-subscription-details .admin-usage-actions {
+  max-width: none;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.admin-usage-history {
+  display: grid !important;
+  max-width: none !important;
+  gap: 6px;
+}
+
+.admin-usage-history > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+@media (max-width: 760px) {
+  .pricing-grid,
+  .subscription-current {
+    grid-template-columns: 1fr;
+  }
+
+  .subscription-page {
+    padding: 28px 16px 48px;
+  }
+
+  .subscription-heading h1 {
+    font-size: 30px;
+  }
+
+  .subscription-actions {
+    grid-column: auto;
+    align-items: stretch;
+    flex-direction: column;
+    gap: 12px;
+  }
+}
+
 .panel {
   overflow: hidden;
   border: 1px solid var(--line);

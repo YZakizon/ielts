@@ -7,6 +7,8 @@ const nodemailer = require("nodemailer");
 const path = require("path");
 const { Pool } = require("pg");
 const Stripe = require("stripe");
+const { SubscriptionService } = require("./subscription-service");
+const { UsageError, UsageService } = require("./usage-service");
 const {
   accountPlans,
   accountPlanLabel,
@@ -53,6 +55,7 @@ const adminEmails = new Set(
     .filter(Boolean),
 );
 const databaseUrl = process.env.DATABASE_URL || "";
+const databaseHost = process.env.DATABASE_HOST || "";
 const sessionSecret = process.env.SESSION_SECRET || "";
 const sessionCookieName = "ielts_session";
 const guestCookieName = "ielts_guest_id";
@@ -63,8 +66,25 @@ const smtpUser = process.env.SMTP_USER || "";
 const smtpPassword = process.env.SMTP_PASSWORD || "";
 const smtpFrom = process.env.SMTP_FROM || smtpUser;
 const smtpTimeoutMs = Number(process.env.SMTP_TIMEOUT_MS || 5000);
-const dbPool = databaseUrl ? new Pool({ connectionString: databaseUrl }) : null;
+const dbPool = databaseHost
+  ? new Pool({
+      host: databaseHost,
+      port: Number(process.env.DATABASE_PORT || 5432),
+      database: process.env.DATABASE_NAME || process.env.POSTGRES_DB || "ielts",
+      user: process.env.DATABASE_USER || process.env.POSTGRES_USER || "ielts",
+      password: process.env.DATABASE_PASSWORD || process.env.POSTGRES_PASSWORD || "",
+    })
+  : databaseUrl
+    ? new Pool({ connectionString: databaseUrl })
+    : null;
 const stripe = process.env.STRIPE_SECRET_KEY ? new Stripe(process.env.STRIPE_SECRET_KEY) : null;
+const stripeWebhookSecret = String(process.env.STRIPE_WEBHOOK_SECRET || "");
+const stripePrices = {
+  premium: String(process.env.STRIPE_PRICE_PREMIUM_MONTHLY || ""),
+  pro: String(process.env.STRIPE_PRICE_PRO_MONTHLY || ""),
+};
+const subscriptionService = dbPool ? new SubscriptionService(dbPool, { pastDueGraceDays: process.env.STRIPE_PAST_DUE_GRACE_DAYS }) : null;
+const usageService = dbPool ? new UsageService(dbPool, subscriptionService) : null;
 
 app.set("trust proxy", "loopback");
 
@@ -353,6 +373,39 @@ function isAdminUser(user) {
   return Boolean(user?.email_verified_at && effectiveAccountPlan(user) === "admin");
 }
 
+function translationRequestId(req) {
+  return String(req.headers["idempotency-key"] || req.headers["x-translation-request-id"] || req.body?.requestId || "");
+}
+
+function sendUsageError(res, error) {
+  return res.status(error.statusCode || 429).json({
+    error: error.code,
+    message: error.message,
+    ...error.details,
+  });
+}
+
+async function reserveTranslationUsage(req, res, type) {
+  try {
+    return await usageService.reserve(req.user.id, type, translationRequestId(req));
+  } catch (error) {
+    if (error instanceof UsageError) {
+      sendUsageError(res, error);
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function refundTranslationUsage(reservation) {
+  if (!reservation) return;
+  try {
+    await usageService.refund(reservation);
+  } catch (error) {
+    console.error(JSON.stringify({ event: "usage.refund_failed", user_id: reservation.userId, translation_request_id: reservation.requestId, error: error.message }));
+  }
+}
+
 function validateAccountInput(email, password) {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) {
     return "Enter a valid email address.";
@@ -582,6 +635,9 @@ async function initializeDatabase() {
       updated_at timestamptz NOT NULL DEFAULT now()
     )
   `);
+
+  await subscriptionService.initializeSchema();
+  await subscriptionService.configureStripePrices(stripePrices);
 
   await dbPool.query(`
     DO $$
@@ -1257,9 +1313,8 @@ async function lookupStripeBilling(email) {
 
 async function adminUserPayload(row) {
   const isAdmin = isAdminUser(row);
-  const planKey = effectiveAccountPlan(row);
   try {
-    const billing = await lookupStripeBilling(row.email);
+    const subscription = await subscriptionService.getSubscriptionSummary(row.id);
     return {
       id: Number(row.id),
       email: row.email,
@@ -1268,11 +1323,12 @@ async function adminUserPayload(row) {
       emailVerified: Boolean(row.email_verified_at),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      ...billing,
       localPlan: normalizeAccountPlan(row.plan),
-      plan: planKey,
-      planLabel: accountPlanLabel(planKey),
-      billingPlan: billing.plan,
+      plan: subscription.plan,
+      planLabel: subscription.planName || "No subscription",
+      billingPlan: subscription.planName || "None",
+      billingStatus: subscription.status,
+      subscription,
     };
   } catch (error) {
     return {
@@ -1284,8 +1340,8 @@ async function adminUserPayload(row) {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       localPlan: normalizeAccountPlan(row.plan),
-      plan: planKey,
-      planLabel: accountPlanLabel(planKey),
+      plan: null,
+      planLabel: "No subscription",
       billingPlan: "Unknown",
       billingStatus: "lookup_error",
       stripeCustomerId: null,
@@ -1617,29 +1673,189 @@ function renderPasswordResetPage(token) {
   `;
 }
 
+async function processStripeEvent(event) {
+  const object = event.data.object;
+  if (["customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted"].includes(event.type)) {
+    await subscriptionService.syncStripeSubscription(object, event.created);
+    return;
+  }
+  if (event.type === "checkout.session.completed" && object.subscription) {
+    const subscription = await stripe.subscriptions.retrieve(object.subscription, { expand: ["items.data.price"] });
+    await subscriptionService.syncStripeSubscription(subscription, event.created);
+    return;
+  }
+  if (["invoice.paid", "invoice.payment_failed"].includes(event.type)) {
+    const subscriptionId = typeof object.subscription === "string" ? object.subscription : object.parent?.subscription_details?.subscription;
+    if (subscriptionId) {
+      const subscription = await stripe.subscriptions.retrieve(subscriptionId, { expand: ["items.data.price"] });
+      await subscriptionService.syncStripeSubscription(subscription, event.created);
+    }
+  }
+}
+
+app.post("/api/webhooks/stripe", express.raw({ type: "application/json", limit: "256kb" }), async (req, res) => {
+  if (!stripe || !stripeWebhookSecret) return res.status(503).json({ error: "Stripe webhooks are not configured." });
+  let event;
+  try {
+    event = stripe.webhooks.constructEvent(req.body, req.headers["stripe-signature"], stripeWebhookSecret);
+  } catch {
+    return res.status(400).json({ error: "Invalid Stripe webhook signature." });
+  }
+  try {
+    const claimed = await dbPool.query(
+      `INSERT INTO stripe_webhook_events (id,stripe_event_id,event_type,payload,processing_started_at) VALUES ($1,$2,$3,$4,now())
+       ON CONFLICT (stripe_event_id) DO UPDATE SET processing_error=NULL,processing_started_at=now()
+       WHERE stripe_webhook_events.processed_at IS NULL
+         AND (stripe_webhook_events.processing_started_at IS NULL OR stripe_webhook_events.processing_started_at < now() - interval '5 minutes')
+       RETURNING processed_at`,
+      [randomUUID(), event.id, event.type, event],
+    );
+    if (!claimed.rowCount || claimed.rows[0].processed_at) return res.json({ received: true, duplicate: true });
+    await processStripeEvent(event);
+    await dbPool.query("UPDATE stripe_webhook_events SET processed_at=now(),processing_error=NULL,processing_started_at=NULL WHERE stripe_event_id=$1", [event.id]);
+    res.json({ received: true });
+  } catch (error) {
+    await dbPool.query("UPDATE stripe_webhook_events SET processing_error=$1,processing_started_at=NULL WHERE stripe_event_id=$2", [String(error.message).slice(0, 2000), event.id]).catch(() => {});
+    console.error(JSON.stringify({ event: "stripe.webhook_failed", stripe_event_id: event.id, stripe_event_type: event.type, error: error.message }));
+    res.status(500).json({ error: "Stripe webhook processing failed." });
+  }
+});
+
 app.use(express.json({ limit: "32kb" }));
 app.get("/api/session", async (req, res, next) => {
   try {
     const user = await readUserFromSession(req);
-    const guestId = ensureGuestId(req, res);
-    const usage = dbPool
-      ? maxQuotaUsage(await getGuestUsage(guestId), await getAnonymousUsage(anonymousQuotaKey(req)))
-      : {};
-    const plan = user ? effectiveAccountPlan(user) : null;
-    const planUsage = user && dbPool ? await getPlanUsageToday(user.id) : {};
+    const subscription = user && subscriptionService ? await subscriptionService.getSubscriptionSummary(user.id) : null;
+    const plan = subscription?.plan || null;
     res.json({
       authenticated: Boolean(user),
       configured: authConfigured(),
       email: user?.email || null,
       isAdmin: isAdminUser(user),
-      quota: quotaPayload(usage),
+      quota: null,
       plan,
-      planLabel: plan ? accountPlanLabel(plan) : null,
-      planUsage: user ? planUsagePayload(plan, planUsage) : null,
+      planLabel: subscription?.planName || null,
+      planUsage: subscription?.usage || null,
+      subscription,
     });
   } catch (error) {
     next(error);
   }
+});
+
+app.get("/api/billing/plans", async (_req, res, next) => {
+  try {
+    const plans = await subscriptionService.listPlans();
+    res.json({ plans: plans.map((plan) => ({
+      key: plan.key, name: plan.name, description: plan.description,
+      vocabularyLimit: plan.vocabulary_translation_limit,
+      sentenceLimit: plan.sentence_translation_limit,
+      monthlyAvailable: Boolean(plan.stripe_monthly_price_id),
+    })) });
+  } catch (error) { next(error); }
+});
+
+app.get("/api/billing/subscription", requireAuth, async (req, res, next) => {
+  try { res.json({ subscription: await subscriptionService.getSubscriptionSummary(req.user.id) }); }
+  catch (error) { next(error); }
+});
+
+app.get("/api/billing/usage", requireAuth, async (req, res, next) => {
+  try { res.json({ current: (await subscriptionService.getSubscriptionSummary(req.user.id)).usage, periods: await usageService.history(req.user.id) }); }
+  catch (error) { next(error); }
+});
+
+async function ensureStripeCustomer(req) {
+  const existing = await dbPool.query("SELECT stripe_customer_id,email FROM app_users WHERE id=$1", [req.user.id]);
+  if (existing.rows[0]?.stripe_customer_id) return existing.rows[0].stripe_customer_id;
+  const customer = await stripe.customers.create({ email: existing.rows[0].email, metadata: { user_id: String(req.user.id) } });
+  await dbPool.query("UPDATE app_users SET stripe_customer_id=$1,updated_at=now() WHERE id=$2 AND stripe_customer_id IS NULL", [customer.id, req.user.id]);
+  const saved = await dbPool.query("SELECT stripe_customer_id FROM app_users WHERE id=$1", [req.user.id]);
+  return saved.rows[0].stripe_customer_id;
+}
+
+function requireStripeBilling(res) {
+  if (!stripe) { res.status(503).json({ error: "Stripe billing is not configured." }); return false; }
+  return true;
+}
+
+app.post("/api/billing/checkout", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  const planKey = String(req.body?.plan || "").toLowerCase();
+  const interval = String(req.body?.interval || "monthly");
+  if (!stripePrices[planKey] || interval !== "monthly") return res.status(400).json({ error: "Invalid or unavailable billing plan." });
+  try {
+    const existing = await subscriptionService.getEffectiveSubscription(req.user.id);
+    if (existing?.source === "stripe") return res.status(409).json({ error: "Manage or change your existing Stripe subscription." });
+    const customer = await ensureStripeCustomer(req);
+    const session = await stripe.checkout.sessions.create({
+      customer, mode: "subscription", line_items: [{ price: stripePrices[planKey], quantity: 1 }],
+      success_url: `${publicBaseUrl(req)}/?checkout=success#subscription`,
+      cancel_url: `${publicBaseUrl(req)}/?checkout=cancelled#subscription`,
+      subscription_data: { metadata: { user_id: String(req.user.id), plan: planKey } },
+      metadata: { user_id: String(req.user.id), plan: planKey },
+    });
+    res.json({ url: session.url });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/billing/portal", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  try {
+    const customer = await ensureStripeCustomer(req);
+    const session = await stripe.billingPortal.sessions.create({ customer, return_url: `${publicBaseUrl(req)}/#subscription` });
+    res.json({ url: session.url });
+  } catch (error) { next(error); }
+});
+
+async function activeStripeSubscription(userId) {
+  const result = await dbPool.query("SELECT * FROM subscriptions WHERE user_id=$1 AND source='stripe' AND status IN ('active','past_due') ORDER BY updated_at DESC LIMIT 1", [userId]);
+  if (!result.rows[0]) throw Object.assign(new Error("Active Stripe subscription not found."), { statusCode: 404 });
+  return result.rows[0];
+}
+
+app.post("/api/billing/upgrade", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  try {
+    const local = await activeStripeSubscription(req.user.id);
+    const remote = await stripe.subscriptions.retrieve(local.stripe_subscription_id);
+    if (String(req.body?.plan) !== "pro") return res.status(400).json({ error: "Only upgrading to Pro is supported." });
+    await stripe.subscriptions.update(remote.id, { items: [{ id: remote.items.data[0].id, price: stripePrices.pro }], proration_behavior: "always_invoice" });
+    res.status(202).json({ message: "Upgrade submitted. Access updates after Stripe confirmation." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/billing/downgrade", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  try {
+    const local = await activeStripeSubscription(req.user.id);
+    const remote = await stripe.subscriptions.retrieve(local.stripe_subscription_id);
+    const remoteItem = remote.items.data[0];
+    const periodStart = remoteItem.current_period_start || remote.current_period_start;
+    const periodEnd = remoteItem.current_period_end || remote.current_period_end;
+    if (String(req.body?.plan) !== "premium") return res.status(400).json({ error: "Only downgrading to Premium is supported." });
+    const schedule = remote.schedule || (await stripe.subscriptionSchedules.create({ from_subscription: remote.id })).id;
+    await stripe.subscriptionSchedules.update(typeof schedule === "string" ? schedule : schedule.id, {
+      end_behavior: "release",
+      phases: [
+        { items: [{ price: remoteItem.price.id, quantity: 1 }], start_date: periodStart, end_date: periodEnd },
+        { items: [{ price: stripePrices.premium, quantity: 1 }], start_date: periodEnd },
+      ],
+    });
+    res.status(202).json({ message: "Downgrade scheduled for the next billing period." });
+  } catch (error) { next(error); }
+});
+
+app.post("/api/billing/cancel", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  try { const local = await activeStripeSubscription(req.user.id); await stripe.subscriptions.update(local.stripe_subscription_id, { cancel_at_period_end: true }); res.status(202).json({ message: "Cancellation scheduled." }); }
+  catch (error) { next(error); }
+});
+
+app.post("/api/billing/reactivate", requireAuth, async (req, res, next) => {
+  if (!requireStripeBilling(res)) return;
+  try { const local = await activeStripeSubscription(req.user.id); await stripe.subscriptions.update(local.stripe_subscription_id, { cancel_at_period_end: false }); res.status(202).json({ message: "Reactivation submitted." }); }
+  catch (error) { next(error); }
 });
 
 app.post("/api/signup", async (req, res, next) => {
@@ -2062,6 +2278,60 @@ app.patch("/api/admin/users/:id/plan", requireAdmin, async (req, res, next) => {
   }
 });
 
+app.post("/api/admin/users/:id/subscription", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) return res.status(400).json({ error: "Invalid user id." });
+  const expiresAt = req.body?.expiresAt ? new Date(req.body.expiresAt) : null;
+  if (expiresAt && (!Number.isFinite(expiresAt.getTime()) || expiresAt <= new Date())) return res.status(400).json({ error: "Expiration must be in the future." });
+  try {
+    const subscription = await subscriptionService.grantAdminSubscription({ userId, planKey: String(req.body?.plan || ""), actorUserId: req.user.id, expiresAt, reason: String(req.body?.reason || "") });
+    res.status(201).json({ subscription });
+  } catch (error) { if (error.statusCode) return res.status(error.statusCode).json({ error: error.message }); next(error); }
+});
+
+app.patch("/api/admin/users/:id/subscription", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) return res.status(400).json({ error: "Invalid user id." });
+  const expiresAt = req.body?.expiresAt ? new Date(req.body.expiresAt) : null;
+  try {
+    const subscription = await subscriptionService.grantAdminSubscription({ userId, planKey: String(req.body?.plan || ""), actorUserId: req.user.id, expiresAt, reason: String(req.body?.reason || "Plan changed by administrator") });
+    res.json({ subscription });
+  } catch (error) { if (error.statusCode) return res.status(error.statusCode).json({ error: error.message }); next(error); }
+});
+
+app.delete("/api/admin/users/:id/subscription", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  if (!Number.isSafeInteger(userId) || userId <= 0) return res.status(400).json({ error: "Invalid user id." });
+  try { await subscriptionService.removeAdminSubscription({ userId, actorUserId: req.user.id, reason: String(req.body?.reason || "Removed by administrator") }); res.json({ removed: true }); }
+  catch (error) { if (error.statusCode) return res.status(error.statusCode).json({ error: error.message }); next(error); }
+});
+
+app.get("/api/admin/users/:id/usage", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  try { res.json({ subscription: await subscriptionService.getSubscriptionSummary(userId), periods: await usageService.history(userId) }); }
+  catch (error) { next(error); }
+});
+
+app.post("/api/admin/users/:id/usage-adjustment", requireAdmin, async (req, res, next) => {
+  const userId = Number(req.params.id);
+  const type = String(req.body?.type || "");
+  const amount = Number(req.body?.amount);
+  const reason = String(req.body?.reason || "").trim();
+  const columns = type === "vocabulary_translation" ? { used: "vocabulary_used", limit: "vocabulary_limit" } : type === "sentence_translation" ? { used: "sentence_used", limit: "sentence_limit" } : null;
+  if (!Number.isSafeInteger(userId) || !columns || !Number.isSafeInteger(amount) || amount === 0 || Math.abs(amount) > 1000 || !reason) return res.status(400).json({ error: "Valid type, non-zero amount, and reason are required." });
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const effective = await subscriptionService.getEffectiveSubscription(userId, client);
+    if (!effective) { await client.query("ROLLBACK"); return res.status(404).json({ error: "Active subscription not found." }); }
+    const period = await subscriptionService.ensureUsagePeriod(effective, client);
+    const updated = await client.query(`UPDATE usage_periods SET ${columns.used}=LEAST(${columns.limit},GREATEST(0,${columns.used}+$1)),updated_at=now() WHERE id=$2 RETURNING ${columns.used} AS used,${columns.limit} AS limit`, [amount, period.id]);
+    await client.query("INSERT INTO billing_audit_events (id,event_type,actor_user_id,target_user_id,old_value,new_value,reason) VALUES ($1,'usage.admin_adjusted',$2,$3,$4,$5,$6)", [randomUUID(), req.user.id, userId, { type }, { type, amount, ...updated.rows[0] }, reason]);
+    await client.query("COMMIT");
+    res.json({ usage: updated.rows[0] });
+  } catch (error) { await client.query("ROLLBACK"); next(error); } finally { client.release(); }
+});
+
 app.delete("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
   const userId = Number(req.params.id);
   if (!Number.isSafeInteger(userId) || userId <= 0) {
@@ -2083,9 +2353,9 @@ app.delete("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
   }
 });
 
-app.use("/api/vocab", allowAuthenticatedOrGuestQuota("vocab"));
-app.use("/api/search-vocab", allowAuthenticatedOrGuestQuota("vocab"));
-app.use("/api/translate-sentence", allowAuthenticatedOrGuestQuota("session"));
+app.use("/api/vocab", requireAuth);
+app.use("/api/search-vocab", requireAuth);
+app.use("/api/translate-sentence", requireAuth);
 app.use((req, res, next) => {
   if (req.path !== "/metrics") {
     recordUniqueUser(req, res);
@@ -2147,26 +2417,22 @@ Return only valid JSON with this shape:
 Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markdown.
   `;
 
+  let usageReservation;
   try {
-    const usageReservation = await reserveAuthenticatedUsage(req, res, "vocab", 20);
-    if (!usageReservation.allowed) {
-      return;
-    }
+    usageReservation = await reserveTranslationUsage(req, res, "vocabulary");
+    if (!usageReservation) return;
 
     const generated = await fetchGeneratedJson(prompt);
 
     if (!Array.isArray(generated.words)) {
-      return res.status(502).json({ error: "AI service returned invalid data." });
+      throw new Error("AI service returned invalid data.");
     }
 
     const words = generated.words.slice(0, 20);
-    if (!(await usageReservation.recordSuccess(words.length))) {
-      return;
-    }
-    await recordGuestQuota(req, res);
     recordGeneratedWords(words);
     res.json({ words });
   } catch (error) {
+    await refundTranslationUsage(usageReservation);
     res.status(502).json({ error: error.message || "AI generation failed." });
   }
 });
@@ -2206,23 +2472,19 @@ Return only valid JSON with this shape:
 Use natural ${targetLabel} translations and no markdown.
   `;
 
+  let usageReservation;
   try {
-    const usageReservation = await reserveAuthenticatedUsage(req, res, "vocab", 1);
-    if (!usageReservation.allowed) {
-      return;
-    }
+    usageReservation = await reserveTranslationUsage(req, res, "vocabulary");
+    if (!usageReservation) return;
 
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.word) {
-      return res.status(502).json({ error: "Generation service returned invalid data." });
+      throw new Error("Generation service returned invalid data.");
     }
-    if (!(await usageReservation.recordSuccess(1))) {
-      return;
-    }
-    await recordGuestQuota(req, res);
     recordGeneratedWords([generated]);
     res.json({ word: generated });
   } catch (error) {
+    await refundTranslationUsage(usageReservation);
     res.status(502).json({ error: error.message || "Search generation failed." });
   }
 });
@@ -2301,23 +2563,19 @@ ${needsIeltsFeedback ? "Because the source language is English, provide concise 
 Use the Band 8-9 requirements for the ${targetLabel} translation while preserving the source meaning exactly. Use no markdown and no extra keys.
   `;
 
+  let usageReservation;
   try {
-    const usageReservation = await reserveAuthenticatedUsage(req, res, "translation", 1);
-    if (!usageReservation.allowed) {
-      return;
-    }
+    usageReservation = await reserveTranslationUsage(req, res, "sentence");
+    if (!usageReservation) return;
 
     const generated = await fetchGeneratedJson(prompt);
     if (!generated.translation) {
-      return res.status(502).json({ error: "AI service returned invalid translation data." });
+      throw new Error("AI service returned invalid translation data.");
     }
-    if (!(await usageReservation.recordSuccess(1))) {
-      return;
-    }
-    await recordGuestQuota(req, res);
     recordSentenceTranslation();
     res.json(generated);
   } catch (error) {
+    await refundTranslationUsage(usageReservation);
     res.status(502).json({ error: error.message || "Sentence translation failed." });
   }
 });
@@ -2328,7 +2586,7 @@ app.get("*", (_req, res) => {
 
 app.use((error, _req, res, _next) => {
   console.error(error);
-  res.status(500).json({ error: "Internal server error." });
+  res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : "Internal server error." });
 });
 
 if (require.main === module) {
