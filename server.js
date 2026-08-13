@@ -1014,6 +1014,34 @@ function ttsWindowSql(window) {
     : "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
 }
 
+function ttsLockKeys(identity) {
+  return identity.userId
+    ? [`user:${identity.userId}`]
+    : [`guest:${identity.guestId}`, `ip:${identity.subjectHash}`].sort();
+}
+
+const ttsGenerationGates = new Map();
+
+async function withTtsGenerationGate(identity, task) {
+  const gateKeys = ttsLockKeys(identity);
+  const previous = Promise.all(gateKeys.map((gateKey) => (ttsGenerationGates.get(gateKey) || Promise.resolve()).catch(() => {})));
+  const run = previous.then(task);
+  const blocker = run.catch(() => {});
+  for (const gateKey of gateKeys) {
+    ttsGenerationGates.set(gateKey, blocker);
+  }
+
+  try {
+    return await run;
+  } finally {
+    for (const gateKey of gateKeys) {
+      if (ttsGenerationGates.get(gateKey) === blocker) {
+        ttsGenerationGates.delete(gateKey);
+      }
+    }
+  }
+}
+
 async function getTtsUsage(identity, queryable = dbPool) {
   const { limitMs, window } = ttsLimitForPlan(identity.plan);
   const result = await queryable.query(
@@ -1065,10 +1093,7 @@ async function recordTtsUsage(identity, result) {
   const client = await dbPool.connect();
   try {
     await client.query("BEGIN");
-    const lockKeys = identity.userId
-      ? [`user:${identity.userId}`]
-      : [`guest:${identity.guestId}`, `ip:${identity.subjectHash}`].sort();
-    for (const lockKey of lockKeys) {
+    for (const lockKey of ttsLockKeys(identity)) {
       await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [lockKey]);
     }
     const usage = await getTtsUsage(identity, client);
@@ -2824,11 +2849,17 @@ app.post("/api/tts", async (req, res) => {
 
   const identity = ttsIdentity(req, res);
   try {
-    const before = await getTtsUsage(identity);
-    if (before.limitMs !== null && before.remainingMs <= 0) return sendTtsLimitExceeded(res, before);
+    const ttsResult = await withTtsGenerationGate(identity, async () => {
+      const before = await getTtsUsage(identity);
+      if (before.limitMs !== null && before.remainingMs <= 0) return { limited: true, usage: before };
 
-    const generated = await fetchTtsAudio(text);
-    const recorded = await recordTtsUsage(identity, generated);
+      const generated = await fetchTtsAudio(text);
+      const recorded = await recordTtsUsage(identity, generated);
+      return { generated, recorded };
+    });
+    if (ttsResult.limited) return sendTtsLimitExceeded(res, ttsResult.usage);
+
+    const { generated, recorded } = ttsResult;
     const outcome = recorded.delivered ? "delivered" : "quota_rejected";
     recordTtsMetrics(generated, {
       plan: identity.plan,
@@ -3094,5 +3125,7 @@ module.exports = {
   fetchTtsAudio,
   getTtsUsage,
   recordTtsUsage,
+  ttsLockKeys,
   ttsUsagePayload,
+  withTtsGenerationGate,
 };

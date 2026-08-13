@@ -32,6 +32,25 @@ test("serializes TTS quota charging and stores millisecond duration", () => {
   assert.match(serverSource, /CREATE TABLE IF NOT EXISTS tts_usage_events/);
   assert.match(serverSource, /generated_duration_ms integer NOT NULL/);
   assert.match(serverSource, /charged_duration_ms integer NOT NULL/);
+  assert.match(serverSource, /const ttsGenerationGates = new Map\(\)/);
+  assert.match(serverSource, /async function withTtsGenerationGate\(identity, task\)/);
+  assert.match(serverSource, /Promise\.all\(gateKeys\.map/);
+  assert.match(serverSource, /for \(const gateKey of gateKeys\)/);
+  assert.match(serverSource, /ttsGenerationGates\.set\(gateKey, blocker\)/);
   assert.match(serverSource, /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/);
   assert.match(serverSource, /Math\.min\(result\.durationMs, usage\.remainingMs\)/);
+});
+
+test("gates TTS quota check and provider call before recording usage", () => {
+  const routeStart = serverSource.indexOf('app.post("/api/tts"');
+  const gateIndex = serverSource.indexOf("withTtsGenerationGate(identity", routeStart);
+  const usageIndex = serverSource.indexOf("const before = await getTtsUsage(identity)", gateIndex);
+  const providerIndex = serverSource.indexOf("const generated = await fetchTtsAudio(text)", gateIndex);
+  const recordIndex = serverSource.indexOf("const recorded = await recordTtsUsage(identity, generated)", gateIndex);
+
+  assert.ok(routeStart > -1);
+  assert.ok(gateIndex > routeStart);
+  assert.ok(usageIndex > gateIndex);
+  assert.ok(providerIndex > usageIndex);
+  assert.ok(recordIndex > providerIndex);
 });
