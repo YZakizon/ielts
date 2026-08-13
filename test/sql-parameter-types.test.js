@@ -27,3 +27,11 @@ test("preserves the effective account plan before reserving authenticated quota"
     /req\.user = \{ email: user\.email, id: user\.id, plan: effectiveAccountPlan\(user\) \};\n\s+return next\(\);/,
   );
 });
+
+test("serializes TTS quota charging and stores millisecond duration", () => {
+  assert.match(serverSource, /CREATE TABLE IF NOT EXISTS tts_usage_events/);
+  assert.match(serverSource, /generated_duration_ms integer NOT NULL/);
+  assert.match(serverSource, /charged_duration_ms integer NOT NULL/);
+  assert.match(serverSource, /pg_advisory_xact_lock\(hashtextextended\(\$1::text, 0\)\)/);
+  assert.match(serverSource, /Math\.min\(result\.durationMs, usage\.remainingMs\)/);
+});

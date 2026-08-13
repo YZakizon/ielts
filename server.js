@@ -16,8 +16,10 @@ const {
   effectiveAccountPlan: configuredEffectiveAccountPlan,
   normalizeAccountPlan,
   planUsagePayload,
+  ttsLimitForPlan,
   validAccountPlans,
 } = require("./account-plans");
+const { extractTtsAudio, ttsRequest } = require("./tts");
 
 const app = express();
 const port = process.env.PORT || 8080;
@@ -26,6 +28,7 @@ const legalContactEmail = "info@appliva.io";
 const metricsFile = process.env.METRICS_FILE || "/data/metrics.json";
 const metricsToken = process.env.METRICS_TOKEN || process.env.METRICS_API_KEY || "";
 const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
+const ttsRequestTimeoutMs = Number(process.env.TTS_REQUEST_TIMEOUT_MS || 30000);
 const freeAccountLimitPerMinute = Number(process.env.FREE_ACCOUNT_LIMIT_PER_MINUTE || 2);
 const freeAccountLimitPerHour = Number(process.env.FREE_ACCOUNT_LIMIT_PER_HOUR || 20);
 const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 50);
@@ -149,6 +152,7 @@ function loadMetrics() {
       distinctVocab: Array.isArray(saved.distinctVocab) ? saved.distinctVocab.slice(0, maxDistinctVocab) : [],
       sentenceTranslationsByDay: saved.sentenceTranslationsByDay || {},
       sentenceTranslationsTotal: Number(saved.sentenceTranslationsTotal || 0),
+      ttsMetricSeries: saved.ttsMetricSeries || {},
       uniqueUsersByDay: sanitizeUniqueUsersByDay(saved.uniqueUsersByDay),
       vocabByDay: saved.vocabByDay || {},
     };
@@ -161,6 +165,7 @@ function loadMetrics() {
       distinctVocab: [],
       sentenceTranslationsByDay: {},
       sentenceTranslationsTotal: 0,
+      ttsMetricSeries: {},
       uniqueUsersByDay: {},
       vocabByDay: {},
     };
@@ -640,6 +645,28 @@ function recordSentenceTranslation() {
   saveMetrics();
 }
 
+function ttsMetricKey(labels) {
+  return [labels.plan, labels.keyType, labels.voice, labels.model].join("|");
+}
+
+function recordTtsMetrics(result, labels, outcome) {
+  const key = ttsMetricKey(labels);
+  const series = metrics.ttsMetricSeries[key] || {
+    generatedSeconds: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    outcomes: {},
+  };
+  series.generatedSeconds += result.durationMs / 1000;
+  series.inputTokens += result.inputTokens;
+  series.outputTokens += result.outputTokens;
+  series.totalTokens += result.totalTokens;
+  series.outcomes[outcome] = Number(series.outcomes[outcome] || 0) + 1;
+  metrics.ttsMetricSeries[key] = series;
+  saveMetrics();
+}
+
 async function initializeDatabase() {
   if (!dbPool) {
     throw new Error("DATABASE_URL is required for login.");
@@ -666,6 +693,27 @@ async function initializeDatabase() {
 
   await subscriptionService.initializeSchema();
   await subscriptionService.configureStripePrices(stripePrices);
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS tts_usage_events (
+      id bigserial PRIMARY KEY,
+      user_id bigint REFERENCES app_users(id) ON DELETE CASCADE,
+      guest_id uuid,
+      subject_hash text,
+      plan text NOT NULL,
+      generated_duration_ms integer NOT NULL,
+      charged_duration_ms integer NOT NULL,
+      input_tokens integer NOT NULL DEFAULT 0,
+      output_tokens integer NOT NULL DEFAULT 0,
+      total_tokens integer NOT NULL DEFAULT 0,
+      delivery_status text NOT NULL,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS tts_usage_events_identity_created_idx
+    ON tts_usage_events (user_id, guest_id, subject_hash, created_at DESC)
+  `);
 
   await dbPool.query(`
     DO $$
@@ -935,6 +983,129 @@ function allowAuthenticatedOrGuestQuota(quotaType) {
   };
 }
 
+async function attachOptionalUser(req, res, next) {
+  if (!authConfigured()) {
+    return res.status(503).json({ error: "Login is not configured. Set DATABASE_URL and SESSION_SECRET." });
+  }
+  try {
+    const user = await readUserFromSession(req);
+    if (user) req.user = { email: user.email, id: user.id, plan: effectiveAccountPlan(user) };
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+function ttsIdentity(req, res) {
+  if (req.user) {
+    return { userId: Number(req.user.id), guestId: null, subjectHash: null, plan: normalizeAccountPlan(req.user.plan) };
+  }
+  return {
+    userId: null,
+    guestId: ensureGuestId(req, res),
+    subjectHash: anonymousQuotaKey(req),
+    plan: "free",
+  };
+}
+
+function ttsWindowSql(window) {
+  return window === "hour"
+    ? "now() - interval '1 hour'"
+    : "date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'";
+}
+
+async function getTtsUsage(identity, queryable = dbPool) {
+  const { limitMs, window } = ttsLimitForPlan(identity.plan);
+  const result = await queryable.query(
+    `
+      SELECT COALESCE(SUM(charged_duration_ms), 0)::bigint AS used_ms
+      FROM tts_usage_events
+      WHERE created_at >= ${ttsWindowSql(window)}
+        AND (
+          ($1::bigint IS NOT NULL AND user_id = $1::bigint)
+          OR ($1::bigint IS NULL AND (guest_id = $2::uuid OR subject_hash = $3::text))
+        )
+    `,
+    [identity.userId, identity.guestId, identity.subjectHash],
+  );
+  const usedMs = Number(result.rows[0]?.used_ms || 0);
+  return { limitMs, remainingMs: limitMs === null ? null : Math.max(limitMs - usedMs, 0), usedMs, window };
+}
+
+function setTtsUsageHeaders(res, usage, durationMs = null) {
+  res.set("X-TTS-Window", usage.window);
+  res.set("X-TTS-Used-Seconds", String(Math.ceil(usage.usedMs / 1000)));
+  if (usage.limitMs !== null) {
+    res.set("X-TTS-Limit-Seconds", String(Math.floor(usage.limitMs / 1000)));
+    res.set("X-TTS-Remaining-Seconds", String(Math.floor(usage.remainingMs / 1000)));
+  }
+  if (durationMs !== null) res.set("X-TTS-Duration-Seconds", String(Math.ceil(durationMs / 1000)));
+}
+
+function ttsUsagePayload(usage) {
+  return {
+    limitSeconds: usage.limitMs === null ? null : Math.floor(usage.limitMs / 1000),
+    usedSeconds: Math.ceil(usage.usedMs / 1000),
+    remainingSeconds: usage.remainingMs === null ? null : Math.floor(usage.remainingMs / 1000),
+    window: usage.window,
+  };
+}
+
+function sendTtsLimitExceeded(res, usage) {
+  setTtsUsageHeaders(res, usage);
+  res.set("Retry-After", String(usage.window === "hour" ? 3600 : 86400));
+  return res.status(429).json({
+    error: "Text-to-speech time limit reached for your plan.",
+    code: "tts_limit_reached",
+    ttsUsage: ttsUsagePayload(usage),
+  });
+}
+
+async function recordTtsUsage(identity, result) {
+  const client = await dbPool.connect();
+  try {
+    await client.query("BEGIN");
+    const lockKeys = identity.userId
+      ? [`user:${identity.userId}`]
+      : [`guest:${identity.guestId}`, `ip:${identity.subjectHash}`].sort();
+    for (const lockKey of lockKeys) {
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))", [lockKey]);
+    }
+    const usage = await getTtsUsage(identity, client);
+    const chargedMs = usage.limitMs === null ? result.durationMs : Math.min(result.durationMs, usage.remainingMs);
+    const delivered = usage.limitMs === null || result.durationMs <= usage.remainingMs;
+    await client.query(
+      `
+        INSERT INTO tts_usage_events (
+          user_id, guest_id, subject_hash, plan, generated_duration_ms, charged_duration_ms,
+          input_tokens, output_tokens, total_tokens, delivery_status
+        ) VALUES ($1::bigint, $2::uuid, $3::text, $4::text, $5::integer, $6::integer,
+          $7::integer, $8::integer, $9::integer, $10::text)
+      `,
+      [
+        identity.userId,
+        identity.guestId,
+        identity.subjectHash,
+        identity.plan,
+        result.durationMs,
+        chargedMs,
+        result.inputTokens,
+        result.outputTokens,
+        result.totalTokens,
+        delivered ? "delivered" : "quota_rejected",
+      ],
+    );
+    await client.query("DELETE FROM tts_usage_events WHERE created_at < now() - interval '2 days'");
+    await client.query("COMMIT");
+    return { delivered, usage: await getTtsUsage(identity) };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function recordGuestQuota(req, res) {
   return Boolean(req.guestQuotaReserved && !req.user && res);
 }
@@ -948,6 +1119,11 @@ function metricLine(name, value, labels = {}) {
 }
 
 function renderMetrics() {
+  const ttsSeries = Object.entries(metrics.ttsMetricSeries).flatMap(([key, series]) => {
+    const [plan, keyType, voice, model] = key.split("|");
+    const labels = { plan, key_type: keyType, voice, model };
+    return { labels, series };
+  });
   const lines = [
     "# HELP ielts_ai_calls_total Total successful AI generation calls.",
     "# TYPE ielts_ai_calls_total counter",
@@ -985,6 +1161,23 @@ function renderMetrics() {
     "# TYPE ielts_unique_users_per_day gauge",
     ...Object.entries(metrics.uniqueUsersByDay).map(([day, users]) =>
       metricLine("ielts_unique_users_per_day", users.length, { day }),
+    ),
+    "# HELP ielts_tts_generated_seconds_total Total generated TTS audio duration in seconds.",
+    "# TYPE ielts_tts_generated_seconds_total counter",
+    ...ttsSeries.map(({ labels, series }) => metricLine("ielts_tts_generated_seconds_total", series.generatedSeconds, labels)),
+    "# HELP ielts_tts_tokens_total Gemini TTS tokens by token type.",
+    "# TYPE ielts_tts_tokens_total counter",
+    ...ttsSeries.flatMap(({ labels, series }) => [
+      metricLine("ielts_tts_tokens_total", series.inputTokens, { ...labels, token_type: "input" }),
+      metricLine("ielts_tts_tokens_total", series.outputTokens, { ...labels, token_type: "output" }),
+      metricLine("ielts_tts_tokens_total", series.totalTokens, { ...labels, token_type: "total" }),
+    ]),
+    "# HELP ielts_tts_generations_total TTS generations by delivery outcome.",
+    "# TYPE ielts_tts_generations_total counter",
+    ...ttsSeries.flatMap(({ labels, series }) =>
+      Object.entries(series.outcomes).map(([outcome, count]) =>
+        metricLine("ielts_tts_generations_total", count, { ...labels, outcome }),
+      ),
     ),
   ];
 
@@ -1082,6 +1275,31 @@ async function fetchWithTimeout(url, options) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchTtsAudio(text) {
+  let lastError;
+  for (const { key, keyType } of configuredAiApiKeyEntries()) {
+    const request = ttsRequest(text, key);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), ttsRequestTimeoutMs);
+      let response;
+      try {
+        response = await fetch(`https://${request.host}/v1beta/models/${request.model}:generateContent`, {
+          ...request.payload,
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timeout);
+      }
+      if (!response.ok) throw new Error(await response.text());
+      return { ...extractTtsAudio(await response.json()), keyType, model: request.model, voice: request.voice };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  throw lastError || new Error("AI_API_KEY or GEMINI_API_KEY_PAID is not configured.");
 }
 
 function freeAccountLimitPayload(counts = {}) {
@@ -1911,6 +2129,14 @@ app.get("/api/session", async (req, res, next) => {
     const user = await readUserFromSession(req);
     const subscription = user && subscriptionService ? await subscriptionService.getSubscriptionSummary(user.id) : null;
     const plan = subscription?.plan || null;
+    const guestId = ensureGuestId(req, res);
+    const ttsUsage = dbPool
+      ? await getTtsUsage(
+          user
+            ? { userId: Number(user.id), guestId: null, subjectHash: null, plan }
+            : { userId: null, guestId, subjectHash: anonymousQuotaKey(req), plan: "free" },
+        )
+      : { limitMs: 10 * 60 * 1000, remainingMs: 10 * 60 * 1000, usedMs: 0, window: "hour" };
     res.json({
       authenticated: Boolean(user),
       configured: authConfigured(),
@@ -1921,6 +2147,7 @@ app.get("/api/session", async (req, res, next) => {
       planLabel: subscription?.planName || null,
       planUsage: subscription?.usage || null,
       subscription,
+      ttsUsage: ttsUsagePayload(ttsUsage),
     });
   } catch (error) {
     next(error);
@@ -2555,6 +2782,7 @@ app.delete("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
 app.use("/api/vocab", requireAuth);
 app.use("/api/search-vocab", requireAuth);
 app.use("/api/translate-sentence", requireAuth);
+app.use("/api/tts", attachOptionalUser);
 app.use((req, res, next) => {
   if (req.path !== "/metrics") {
     recordUniqueUser(req, res);
@@ -2584,6 +2812,37 @@ app.get(["/app.js", "/admin.js", "/dashboard.js", "/styles.css"], (req, res) => 
 
 app.get("/metrics", requireMetricsToken, (_req, res) => {
   res.type("text/plain; version=0.0.4; charset=utf-8").send(renderMetrics());
+});
+
+app.post("/api/tts", async (req, res) => {
+  const text = String(req.body?.text || "").trim();
+  if (!text) return res.status(400).json({ error: "Text-to-speech text is required." });
+  if (text.length > 1000) return res.status(400).json({ error: "Text-to-speech text must be 1,000 characters or fewer." });
+  if (configuredAiApiKeys().length === 0) {
+    return res.status(503).json({ error: "AI_API_KEY or GEMINI_API_KEY_PAID is not configured." });
+  }
+
+  const identity = ttsIdentity(req, res);
+  try {
+    const before = await getTtsUsage(identity);
+    if (before.limitMs !== null && before.remainingMs <= 0) return sendTtsLimitExceeded(res, before);
+
+    const generated = await fetchTtsAudio(text);
+    const recorded = await recordTtsUsage(identity, generated);
+    const outcome = recorded.delivered ? "delivered" : "quota_rejected";
+    recordTtsMetrics(generated, {
+      plan: identity.plan,
+      keyType: generated.keyType,
+      voice: generated.voice,
+      model: generated.model,
+    }, outcome);
+    if (!recorded.delivered) return sendTtsLimitExceeded(res, recorded.usage);
+
+    setTtsUsageHeaders(res, recorded.usage, generated.durationMs);
+    res.type("audio/wav").send(generated.wav);
+  } catch (error) {
+    res.status(502).json({ error: error.name === "AbortError" ? "Text-to-speech generation timed out." : error.message || "Text-to-speech generation failed." });
+  }
 });
 
 app.post("/api/vocab", async (req, res) => {
@@ -2832,4 +3091,8 @@ module.exports = {
   normalizeAccountPlan,
   planUsagePayload,
   renderMetrics,
+  fetchTtsAudio,
+  getTtsUsage,
+  recordTtsUsage,
+  ttsUsagePayload,
 };

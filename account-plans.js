@@ -5,21 +5,29 @@ const accountPlans = {
     label: "Free",
     vocabDailyLimit: Number(process.env.FREE_ACCOUNT_VOCAB_DAILY_LIMIT || freeAccountLimitPerDay),
     translationDailyLimit: Number(process.env.FREE_ACCOUNT_TRANSLATION_DAILY_LIMIT || freeAccountLimitPerDay),
+    ttsLimitMinutes: Number(process.env.FREE_TTS_HOURLY_LIMIT_MINUTES || 10),
+    ttsWindow: "hour",
   },
   premium: {
     label: "Premium",
     vocabDailyLimit: Number(process.env.PREMIUM_VOCAB_DAILY_LIMIT || 100),
     translationDailyLimit: Number(process.env.PREMIUM_TRANSLATION_DAILY_LIMIT || 500),
+    ttsLimitMinutes: Number(process.env.PREMIUM_TTS_DAILY_LIMIT_MINUTES || 50),
+    ttsWindow: "day",
   },
   ultimate: {
     label: "Ultimate",
     vocabDailyLimit: Number(process.env.ULTIMATE_VOCAB_DAILY_LIMIT || 500),
     translationDailyLimit: Number(process.env.ULTIMATE_TRANSLATION_DAILY_LIMIT || 1000),
+    ttsLimitMinutes: Number(process.env.ULTIMATE_TTS_DAILY_LIMIT_MINUTES || 90),
+    ttsWindow: "day",
   },
   admin: {
     label: "Admin",
     vocabDailyLimit: null,
     translationDailyLimit: null,
+    ttsLimitMinutes: null,
+    ttsWindow: "day",
   },
 };
 
@@ -41,6 +49,14 @@ function effectiveAccountPlan(user, isConfiguredAdminEmail = false) {
 function dailyLimitForPlan(plan, quotaType) {
   const definition = accountPlans[normalizeAccountPlan(plan)];
   return quotaType === "vocab" ? definition.vocabDailyLimit : definition.translationDailyLimit;
+}
+
+function ttsLimitForPlan(plan) {
+  const definition = accountPlans[normalizeAccountPlan(plan)];
+  return {
+    limitMs: definition.ttsLimitMinutes === null ? null : definition.ttsLimitMinutes * 60 * 1000,
+    window: definition.ttsWindow,
+  };
 }
 
 function planUsagePayload(plan, usage = {}) {
@@ -70,5 +86,6 @@ module.exports = {
   effectiveAccountPlan,
   normalizeAccountPlan,
   planUsagePayload,
+  ttsLimitForPlan,
   validAccountPlans,
 };

@@ -13,6 +13,9 @@ Traefik, and `td340` is for production Nginx.
 ```bash
 AI_API_KEY=your_key_here
 AI_MODEL=
+TTS_MODEL=gemini-2.5-flash-preview-tts
+TTS_VOICE=Achernar
+TTS_REQUEST_TIMEOUT_MS=30000
 IELTS_HOST_PORT=8091
 METRICS_FILE=/data/metrics.json
 METRICS_TOKEN=replace_with_a_long_random_metrics_token
@@ -38,6 +41,9 @@ SMTP_TIMEOUT_MS=5000
 LOGIN_RATE_LIMIT_WINDOW_MS=900000
 LOGIN_RATE_LIMIT_MAX=5
 LOGIN_RATE_LIMIT_LOCKOUT_MS=900000
+FREE_TTS_HOURLY_LIMIT_MINUTES=10
+PREMIUM_TTS_DAILY_LIMIT_MINUTES=50
+ULTIMATE_TTS_DAILY_LIMIT_MINUTES=90
 ```
 
 The `td340` Compose profile requires this `.env` and passes it into the app
@@ -58,6 +64,11 @@ verification link through the configured SMTP server. Without SMTP, the app logs
 the verification link server-side for local development only.
 Translation endpoints require a verified login and either an active Stripe-paid
 subscription or an active administrator grant. There is no free plan or trial.
+Text-to-speech uses Gemini 2.5 Flash Preview TTS with the Achernar voice by
+default. Anonymous visitors and Free accounts receive 10 generated audio
+minutes per rolling hour, Premium receives 50 minutes per UTC day, Ultimate
+receives 90 minutes per UTC day, and Admin is unlimited. Quotas count generated
+audio duration rather than playback time.
 
 2. Deploy the app:
 
@@ -100,3 +111,10 @@ Metrics exposed:
 - `ielts_sentence_translations_total`
 - `ielts_sentence_translations_per_day_total{day="YYYY-MM-DD"}`
 - `ielts_unique_users_per_day{day="YYYY-MM-DD"}`
+- `ielts_tts_generated_seconds_total{plan,key_type,voice,model}`
+- `ielts_tts_tokens_total{token_type,plan,key_type,voice,model}`
+- `ielts_tts_generations_total{outcome,plan,key_type,voice,model}`
+
+The standalone Grafana dashboard is stored at
+`infra/gw1/grafana/ielts-tts.json`. Import or provision it in the existing
+Grafana instance without replacing its other dashboards or provisioning.

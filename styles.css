@@ -1571,6 +1571,25 @@ button:hover {
   white-space: pre-wrap;
 }
 
+.tts-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.tts-controls button {
+  min-height: 36px;
+}
+
+.tts-controls span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
 .empty-result {
   color: var(--muted);
 }

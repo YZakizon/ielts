@@ -5,7 +5,7 @@ const test = require("node:test");
 process.env.METRICS_FILE = "/tmp/ielts-gemini-fallback-test-metrics.json";
 fs.rmSync(process.env.METRICS_FILE, { force: true });
 
-const { configuredAiApiKeys, fetchGeneratedJson, renderMetrics } = require("../server");
+const { configuredAiApiKeys, fetchGeneratedJson, fetchTtsAudio, renderMetrics } = require("../server");
 
 function geminiResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -58,4 +58,33 @@ test("does not retry the same key when both variables match", () => {
     configuredAiApiKeys({ AI_API_KEY: "same-key", GEMINI_API_KEY_PAID: "same-key" }),
     ["same-key"],
   );
+});
+
+test("uses the paid Gemini key for TTS after a primary-key failure", async (t) => {
+  const originalFetch = global.fetch;
+  const originalPrimaryKey = process.env.AI_API_KEY;
+  const originalPaidKey = process.env.GEMINI_API_KEY_PAID;
+  const usedKeys = [];
+  t.after(() => {
+    global.fetch = originalFetch;
+    process.env.AI_API_KEY = originalPrimaryKey;
+    process.env.GEMINI_API_KEY_PAID = originalPaidKey;
+  });
+  process.env.AI_API_KEY = "primary-key";
+  process.env.GEMINI_API_KEY_PAID = "paid-key";
+  global.fetch = async (_url, options) => {
+    const key = options.headers["x-goog-api-key"];
+    usedKeys.push(key);
+    if (key === "primary-key") return geminiResponse({ error: { message: "quota exceeded" } }, 429);
+    return geminiResponse({
+      candidates: [{ content: { parts: [{ inlineData: { mimeType: "audio/L16;rate=24000", data: Buffer.alloc(4800).toString("base64") } }] } }],
+      usageMetadata: { promptTokenCount: 2, candidatesTokenCount: 3200, totalTokenCount: 3202 },
+    });
+  };
+
+  const generated = await fetchTtsAudio("Speak this");
+  assert.deepEqual(usedKeys, ["primary-key", "paid-key"]);
+  assert.equal(generated.keyType, "paid");
+  assert.equal(generated.durationMs, 100);
+  assert.equal(generated.wav.length, 4844);
 });

@@ -769,6 +769,11 @@ const sourceLanguageSelect = document.querySelector("#sourceLanguageSelect");
 const targetLanguageSelect = document.querySelector("#targetLanguageSelect");
 const sourceLanguageLabel = document.querySelector("#sourceLanguageLabel");
 const targetLanguageLabel = document.querySelector("#targetLanguageLabel");
+const ttsControls = document.querySelector("#ttsControls");
+const ttsPlayBtn = document.querySelector("#ttsPlayBtn");
+const ttsStatus = document.querySelector("#ttsStatus");
+const ttsSpeakerIcon = ttsPlayBtn.querySelector(".tts-speaker-icon");
+const ttsSpinnerIcon = ttsPlayBtn.querySelector(".tts-spinner-icon");
 
 let currentWords = [];
 let selectedWord = null;
@@ -782,6 +787,34 @@ const appStateStorageKey = "ielts-vocab-app-state";
 const defaultVisibleWordCount = 5;
 let appStarted = false;
 let authMode = "signup";
+let translatedSpeech = null;
+let translatedSpeechUrl = "";
+
+ttsStatus.textContent = "Translate a sentence to enable speech";
+
+function formatTtsTime(seconds) {
+  if (seconds === null || seconds === undefined) return "Unlimited";
+  const safe = Math.max(0, Number(seconds) || 0);
+  return `${Math.floor(safe / 60)}:${String(Math.floor(safe % 60)).padStart(2, "0")}`;
+}
+
+function clearTranslatedSpeech() {
+  if (translatedSpeech) {
+    translatedSpeech.pause();
+    translatedSpeech = null;
+  }
+  if (translatedSpeechUrl) URL.revokeObjectURL(translatedSpeechUrl);
+  translatedSpeechUrl = "";
+  ttsPlayBtn.classList.remove("active");
+  ttsPlayBtn.setAttribute("aria-label", "Generate speech for the translation");
+  ttsPlayBtn.title = "Generate speech";
+}
+
+function resetTtsControls(show = false) {
+  clearTranslatedSpeech();
+  ttsPlayBtn.disabled = !show;
+  ttsStatus.textContent = show ? "Achernar voice" : "Translate a sentence to enable speech";
+}
 
 const englishVariantLabels = {
   us: "English (US)",
@@ -1096,6 +1129,9 @@ function updateQuotaBanner(session = {}) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");
   }
+  if (session.ttsUsage && !ttsPlayBtn.disabled) {
+    ttsStatus.textContent = `${formatTtsTime(session.ttsUsage.remainingSeconds)} remaining this ${session.ttsUsage.window}`;
+  }
 }
 
 async function refreshSession() {
@@ -1369,6 +1405,7 @@ async function translateSentence() {
   }
 
   translateSentenceBtn.disabled = true;
+  resetTtsControls(false);
   translationStatus.textContent = "Translating...";
   translationOutput.textContent = "";
   translationOutput.classList.add("empty-result");
@@ -1405,7 +1442,8 @@ async function translateSentence() {
 
     translationOutput.textContent = result.translation;
     translationOutput.classList.remove("empty-result");
-    translationStatus.textContent = "Done";
+    translationStatus.textContent = "";
+    resetTtsControls(true);
     renderTranslationNotes(result);
     renderIeltsFeedback(result);
     refreshSession().catch(() => {});
@@ -1422,6 +1460,61 @@ async function translateSentence() {
     window.clearTimeout(timeoutId);
     translateSentenceBtn.disabled = false;
   }
+}
+
+async function generateTranslatedSpeech() {
+  const text = translationOutput.textContent.trim();
+  if (!text || translationOutput.classList.contains("empty-result")) return;
+  ttsPlayBtn.disabled = true;
+  ttsSpeakerIcon.classList.add("hidden");
+  ttsSpinnerIcon.classList.remove("hidden");
+  ttsStatus.textContent = "Generating speech...";
+  try {
+    const response = await fetchJson("/api/tts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) throw new Error(await responseErrorMessage(response, `Speech request failed: ${response.status}`));
+    clearTranslatedSpeech();
+    translatedSpeechUrl = URL.createObjectURL(await response.blob());
+    translatedSpeech = new Audio(translatedSpeechUrl);
+    translatedSpeech.addEventListener("play", () => {
+      ttsPlayBtn.classList.add("active");
+      ttsPlayBtn.setAttribute("aria-label", "Pause speech");
+      ttsPlayBtn.title = "Pause speech";
+    });
+    translatedSpeech.addEventListener("pause", () => {
+      ttsPlayBtn.classList.remove("active");
+      ttsPlayBtn.setAttribute("aria-label", "Play speech");
+      ttsPlayBtn.title = "Play speech";
+    });
+    translatedSpeech.addEventListener("ended", () => {
+      ttsPlayBtn.classList.remove("active");
+      ttsPlayBtn.setAttribute("aria-label", "Play speech");
+      ttsPlayBtn.title = "Play speech";
+    });
+    const remaining = response.headers.get("X-TTS-Remaining-Seconds");
+    const windowName = response.headers.get("X-TTS-Window") || "period";
+    ttsStatus.textContent = remaining === null ? "Unlimited TTS" : `${formatTtsTime(remaining)} remaining this ${windowName}`;
+    translatedSpeech.play().catch(() => {
+      ttsPlayBtn.setAttribute("aria-label", "Play speech");
+      ttsPlayBtn.title = "Play speech";
+    });
+    refreshSession().catch(() => {});
+  } catch (error) {
+    ttsStatus.textContent = `Speech unavailable. ${error.message.slice(0, 140)}`;
+  } finally {
+    ttsSpinnerIcon.classList.add("hidden");
+    ttsSpeakerIcon.classList.remove("hidden");
+    ttsPlayBtn.disabled = false;
+  }
+}
+
+function toggleTranslatedSpeech() {
+  if (!translatedSpeech) return generateTranslatedSpeech();
+  if (translatedSpeech.paused) return translatedSpeech.play();
+  translatedSpeech.pause();
 }
 
 function renderIeltsFeedback(result) {
@@ -2071,7 +2164,10 @@ searchInput.addEventListener("keydown", (event) => {
   }
 });
 translateSentenceBtn.addEventListener("click", translateSentence);
+ttsPlayBtn.addEventListener("click", toggleTranslatedSpeech);
+window.addEventListener("beforeunload", clearTranslatedSpeech);
 clearSentenceBtn.addEventListener("click", () => {
+  resetTtsControls(false);
   sentenceInput.value = "";
   translationOutput.textContent = "Translation will appear here.";
   translationOutput.classList.add("empty-result");
