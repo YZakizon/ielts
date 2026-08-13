@@ -852,6 +852,35 @@ button {
   cursor: pointer;
 }
 
+#generateBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#generateBtn:disabled,
+#generateBtn[aria-busy="true"] {
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.button-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: button-spin 0.75s linear infinite;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .status-text {
   grid-column: 1 / -1;
   justify-self: end;
