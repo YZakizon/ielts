@@ -710,6 +710,8 @@ const loginPasswordField = document.querySelector("#loginPasswordField");
 const togglePasswordBtn = document.querySelector("#togglePasswordBtn");
 const forgotPasswordBtn = document.querySelector("#forgotPasswordBtn");
 const resendVerificationBtn = document.querySelector("#resendVerificationBtn");
+const termsAgreementField = document.querySelector("#termsAgreementField");
+const termsAgreement = document.querySelector("#termsAgreement");
 const loginBtn = document.querySelector("#loginBtn");
 const loginStatus = document.querySelector("#loginStatus");
 const authHeading = document.querySelector("#authHeading");
@@ -1028,6 +1030,11 @@ function setAuthMode(mode) {
   authHeading.textContent = authMode === "signup" ? "Create an account" : "Welcome back";
   loginBtn.textContent = authMode === "signup" ? "Create account" : "Login";
   forgotPasswordBtn.classList.toggle("hidden", authMode !== "login");
+  termsAgreementField.classList.toggle("hidden", authMode !== "signup");
+  termsAgreement.required = authMode === "signup";
+  if (authMode !== "signup") {
+    termsAgreement.checked = false;
+  }
   resendVerificationBtn.classList.add("hidden");
   setLoginStatus("");
 }
@@ -1038,6 +1045,9 @@ function setPasswordResetMode() {
   loginPasswordField.classList.add("hidden");
   loginPassword.required = false;
   forgotPasswordBtn.classList.add("hidden");
+  termsAgreementField.classList.add("hidden");
+  termsAgreement.required = false;
+  termsAgreement.checked = false;
   resendVerificationBtn.classList.add("hidden");
   loginBtn.textContent = "Reset password";
   setLoginStatus("");
@@ -1659,6 +1669,10 @@ async function login(event) {
     await requestPasswordReset();
     return;
   }
+  if (authMode === "signup" && !termsAgreement.checked) {
+    setLoginStatus("Agree to the Terms and Privacy Policy to create an account.", true);
+    return;
+  }
   setLoginStatus(authMode === "signup" ? "Creating account..." : "Logging in...");
   resendVerificationBtn.classList.add("hidden");
   loginBtn.disabled = true;
@@ -1670,6 +1684,7 @@ async function login(event) {
       body: JSON.stringify({
         email: loginEmail.value.trim(),
         password: loginPassword.value,
+        acceptedTerms: authMode === "signup" ? termsAgreement.checked : undefined,
       }),
     });
     const data = await response.json().catch(() => ({}));
