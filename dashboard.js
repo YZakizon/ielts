@@ -1,5 +1,5 @@
 function usedLimit(usage) {
-  if (!usage) return "Locked";
+  if (!usage) return "No active subscription";
   return `${Number(usage.used || 0).toLocaleString()} / ${Number(usage.limit || 0).toLocaleString()}`;
 }
 
@@ -18,6 +18,10 @@ async function loadDashboard() {
   document.querySelector("#dashboardSentences").textContent = usedLimit(subscription.usage?.sentence);
   document.querySelector("#dashboardStatusValue").textContent = subscription.status || "Inactive";
   document.querySelector("#dashboardPeriod").textContent = subscription.periodEnd ? `Through ${formatDate(subscription.periodEnd)}` : "Not active";
+  const tts = session.ttsUsage || {};
+  const usedMinutes = Math.ceil(Number(tts.usedSeconds || 0) / 60);
+  const limitMinutes = tts.limitSeconds === null ? "Unlimited" : Math.floor(Number(tts.limitSeconds || 0) / 60);
+  document.querySelector("#dashboardTts").textContent = `${usedMinutes} / ${limitMinutes} minutes this ${tts.window || "day"}`;
 }
 
 loadDashboard().catch((error) => { document.querySelector("#dashboardStatus").textContent = error.message; });
