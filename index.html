@@ -72,6 +72,15 @@
         <button id="resendVerificationBtn" class="forgot-password-button hidden" type="button">
           Send verification link again
         </button>
+        <label id="termsAgreementField" class="terms-agreement" for="termsAgreement">
+          <input id="termsAgreement" name="acceptedTerms" type="checkbox" />
+          <span>
+            I agree to the
+            <a href="/terms" target="_blank" rel="noopener">Terms</a>
+            and
+            <a href="/privacy" target="_blank" rel="noopener">Privacy Policy</a>.
+          </span>
+        </label>
         <div class="auth-actions">
           <button id="loginBtn" type="submit">Create account</button>
         </div>
@@ -214,8 +223,9 @@
           </select>
           <label for="englishVariantSelect">English</label>
           <select id="englishVariantSelect">
-            <option value="us">US English</option>
-            <option value="british">British English</option>
+            <option value="us">English (US)</option>
+            <option value="british">English (UK)</option>
+            <option value="australian">English (AU)</option>
           </select>
           <label for="vocabTargetLanguageSelect">Target</label>
           <select id="vocabTargetLanguageSelect">
@@ -227,10 +237,22 @@
             <option value="german">German</option>
             <option value="arabic">Arabic</option>
             <option value="chinese-simplified">Chinese Simplified</option>
+            <option value="portuguese">Portuguese</option>
+            <option value="italian">Italian</option>
+            <option value="hindi">Hindi</option>
+            <option value="urdu">Urdu</option>
+            <option value="thai">Thai</option>
+            <option value="vietnamese">Vietnamese</option>
+            <option value="turkish">Turkish</option>
+            <option value="russian">Russian</option>
+            <option value="polish">Polish</option>
             <option value="japanese">Japanese</option>
             <option value="korean">Korean</option>
           </select>
-          <button id="generateBtn" type="button">Generate</button>
+          <button id="generateBtn" type="button">
+            <span class="button-spinner hidden" aria-hidden="true"></span>
+            <span class="button-label">Generate</span>
+          </button>
         </div>
         <div class="search-controls">
           <label for="searchInput">Search vocab</label>
@@ -355,7 +377,6 @@
           </section>
         </section>
       </section>
-
       <section id="subscriptionPage" class="page-view hidden subscription-page" aria-label="Subscription and usage">
         <header class="subscription-heading">
           <p class="eyebrow">Subscription</p>
@@ -366,6 +387,13 @@
         <div id="pricingGrid" class="pricing-grid" aria-live="polite"></div>
         <p id="billingStatus" class="status-text" role="status"></p>
       </section>
+      <footer class="site-footer">
+        <span>Copyright 2026 Appliva LLC</span>
+        <nav class="legal-links" aria-label="Legal links">
+          <a href="/terms">Terms</a>
+          <a href="/privacy">Privacy Policy</a>
+        </nav>
+      </footer>
     </main>
 
     <script src="app.js"></script>

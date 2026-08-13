@@ -153,11 +153,136 @@ textarea {
   line-height: 1.5;
 }
 
+.site-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin-top: 28px;
+  padding: 16px 0 0;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
+.legal-links {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.legal-links a {
+  color: var(--accent-dark);
+  text-decoration: none;
+}
+
+.legal-links a:hover {
+  text-decoration: underline;
+}
+
+.legal-page {
+  background: linear-gradient(180deg, #f7faf8 0%, #eef5f2 100%);
+  color: var(--ink);
+}
+
+.legal-header {
+  width: min(100% - 32px, 980px);
+}
+
+.legal-page-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legal-shell {
+  width: min(100% - 32px, 860px);
+  margin: 0 auto;
+  padding: 22px 0 28px;
+}
+
+.legal-document {
+  display: grid;
+  gap: 18px;
+  padding: 8px 0 0;
+}
+
+.legal-title {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.legal-title .eyebrow {
+  margin: 0;
+}
+
+.legal-page h1 {
+  margin: 0;
+  font-size: clamp(2rem, 4vw, 3.3rem);
+  line-height: 1.05;
+}
+
+.legal-page h2 {
+  margin: 12px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid rgba(159, 184, 174, 0.35);
+  font-size: 1.05rem;
+  line-height: 1.25;
+}
+
+.legal-page p,
+.legal-page li {
+  color: var(--muted);
+  line-height: 1.72;
+}
+
+.legal-page p {
+  margin: 0;
+}
+
+.legal-page ul {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.legal-copyright {
+  width: min(100% - 32px, 860px);
+  margin: 0 auto;
+  padding: 16px 0 34px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
 .login-panel label {
   display: grid;
   gap: 7px;
   color: var(--muted);
   font-weight: 800;
+}
+
+.login-panel .terms-agreement {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 10px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.terms-agreement input {
+  margin-top: 2px;
+}
+
+.terms-agreement a {
+  color: var(--accent-dark);
+  font-weight: 850;
 }
 
 .password-field {
@@ -725,6 +850,35 @@ button {
   color: white;
   font-weight: 800;
   cursor: pointer;
+}
+
+#generateBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+#generateBtn:disabled,
+#generateBtn[aria-busy="true"] {
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.button-spinner {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  border: 2px solid rgba(255, 255, 255, 0.45);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: button-spin 0.75s linear infinite;
+}
+
+@keyframes button-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .status-text {

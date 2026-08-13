@@ -695,6 +695,8 @@ const levelSelect = document.querySelector("#levelSelect");
 const englishVariantSelect = document.querySelector("#englishVariantSelect");
 const vocabTargetLanguageSelect = document.querySelector("#vocabTargetLanguageSelect");
 const generateBtn = document.querySelector("#generateBtn");
+const generateBtnLabel = generateBtn.querySelector(".button-label");
+const generateBtnSpinner = generateBtn.querySelector(".button-spinner");
 const oneByOneToggle = document.querySelector("#oneByOneToggle");
 const prevWordBtn = document.querySelector("#prevWordBtn");
 const nextWordBtn = document.querySelector("#nextWordBtn");
@@ -710,6 +712,8 @@ const loginPasswordField = document.querySelector("#loginPasswordField");
 const togglePasswordBtn = document.querySelector("#togglePasswordBtn");
 const forgotPasswordBtn = document.querySelector("#forgotPasswordBtn");
 const resendVerificationBtn = document.querySelector("#resendVerificationBtn");
+const termsAgreementField = document.querySelector("#termsAgreementField");
+const termsAgreement = document.querySelector("#termsAgreement");
 const loginBtn = document.querySelector("#loginBtn");
 const loginStatus = document.querySelector("#loginStatus");
 const authHeading = document.querySelector("#authHeading");
@@ -780,8 +784,9 @@ let appStarted = false;
 let authMode = "signup";
 
 const englishVariantLabels = {
-  us: "US English",
-  british: "British English",
+  us: "English (US)",
+  british: "English (UK)",
+  australian: "English (AU)",
 };
 
 const translationLanguageLabels = {
@@ -796,6 +801,15 @@ const translationLanguageLabels = {
   german: "German",
   arabic: "Arabic",
   "chinese-simplified": "Chinese Simplified",
+  portuguese: "Portuguese",
+  italian: "Italian",
+  hindi: "Hindi",
+  urdu: "Urdu",
+  thai: "Thai",
+  vietnamese: "Vietnamese",
+  turkish: "Turkish",
+  russian: "Russian",
+  polish: "Polish",
   japanese: "Japanese",
   korean: "Korean",
 };
@@ -1034,6 +1048,11 @@ function setAuthMode(mode) {
   authHeading.textContent = authMode === "signup" ? "Create an account" : "Welcome back";
   loginBtn.textContent = authMode === "signup" ? "Create account" : "Login";
   forgotPasswordBtn.classList.toggle("hidden", authMode !== "login");
+  termsAgreementField.classList.toggle("hidden", authMode !== "signup");
+  termsAgreement.required = authMode === "signup";
+  if (authMode !== "signup") {
+    termsAgreement.checked = false;
+  }
   resendVerificationBtn.classList.add("hidden");
   setLoginStatus("");
 }
@@ -1044,6 +1063,9 @@ function setPasswordResetMode() {
   loginPasswordField.classList.add("hidden");
   loginPassword.required = false;
   forgotPasswordBtn.classList.add("hidden");
+  termsAgreementField.classList.add("hidden");
+  termsAgreement.required = false;
+  termsAgreement.checked = false;
   resendVerificationBtn.classList.add("hidden");
   loginBtn.textContent = "Reset password";
   setLoginStatus("");
@@ -1477,12 +1499,24 @@ function updateTranslationLanguageLabels() {
   targetLanguageLabel.textContent = "Target language";
 }
 
+function setGenerateLoading(isLoading) {
+  [levelSelect, englishVariantSelect, vocabTargetLanguageSelect].forEach((control) => {
+    control.disabled = isLoading;
+  });
+  generateBtn.disabled = isLoading;
+  generateBtn.setAttribute("aria-busy", String(isLoading));
+  generateBtnLabel.textContent = isLoading ? "Generating..." : "Generate";
+  generateBtnSpinner.classList.toggle("hidden", !isLoading);
+}
+
 async function generateWords() {
+  if (generateBtn.disabled) return;
+
   const level = levelSelect.value;
   const variant = englishVariantSelect.value;
   const targetLanguage = vocabTargetLanguageSelect.value;
 
-  generateBtn.disabled = true;
+  setGenerateLoading(true);
   currentWords = fallbackWords(level);
   selectedWord = null;
   currentWordIndex = 0;
@@ -1512,7 +1546,7 @@ async function generateWords() {
     setStatus(message, true);
     saveAppState();
   } finally {
-    generateBtn.disabled = false;
+    setGenerateLoading(false);
   }
 }
 
@@ -1735,6 +1769,10 @@ async function login(event) {
     await requestPasswordReset();
     return;
   }
+  if (authMode === "signup" && !termsAgreement.checked) {
+    setLoginStatus("Agree to the Terms and Privacy Policy to create an account.", true);
+    return;
+  }
   setLoginStatus(authMode === "signup" ? "Creating account..." : "Logging in...");
   resendVerificationBtn.classList.add("hidden");
   loginBtn.disabled = true;
@@ -1746,6 +1784,7 @@ async function login(event) {
       body: JSON.stringify({
         email: loginEmail.value.trim(),
         password: loginPassword.value,
+        acceptedTerms: authMode === "signup" ? termsAgreement.checked : undefined,
       }),
     });
     const data = await response.json().catch(() => ({}));

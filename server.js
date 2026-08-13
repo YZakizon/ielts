@@ -21,6 +21,8 @@ const {
 
 const app = express();
 const port = process.env.PORT || 8080;
+const policyVersion = "2026-08-13";
+const legalContactEmail = "info@appliva.io";
 const metricsFile = process.env.METRICS_FILE || "/data/metrics.json";
 const metricsToken = process.env.METRICS_TOKEN || process.env.METRICS_API_KEY || "";
 const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
@@ -96,8 +98,9 @@ const labels = {
 };
 
 const englishVariantLabels = {
-  us: "US English",
-  british: "British English",
+  us: "English (US)",
+  british: "English (UK)",
+  australian: "English (AU)",
 };
 
 const translationLanguageLabels = {
@@ -112,6 +115,15 @@ const translationLanguageLabels = {
   german: "German",
   arabic: "Arabic",
   "chinese-simplified": "Chinese Simplified",
+  portuguese: "Portuguese",
+  italian: "Italian",
+  hindi: "Hindi",
+  urdu: "Urdu",
+  thai: "Thai",
+  vietnamese: "Vietnamese",
+  turkish: "Turkish",
+  russian: "Russian",
+  polish: "Polish",
   japanese: "Japanese",
   korean: "Korean",
 };
@@ -423,6 +435,19 @@ function validatePassword(password) {
   return "";
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function privacyContactText() {
+  return legalContactEmail;
+}
+
 function ensureGuestId(req, res) {
   const cookies = parseCookies(req.headers.cookie);
   const guestId = uuidPattern.test(cookies[guestCookieName] || "")
@@ -631,6 +656,9 @@ async function initializeDatabase() {
       email_verification_expires_at timestamptz,
       password_reset_token_hash text,
       password_reset_expires_at timestamptz,
+      terms_accepted_at timestamptz,
+      terms_version text,
+      privacy_version text,
       created_at timestamptz NOT NULL DEFAULT now(),
       updated_at timestamptz NOT NULL DEFAULT now()
     )
@@ -659,6 +687,9 @@ async function initializeDatabase() {
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_token_hash text");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS password_reset_expires_at timestamptz");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS terms_accepted_at timestamptz");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS terms_version text");
+  await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS privacy_version text");
   await dbPool.query("ALTER TABLE app_users ADD COLUMN IF NOT EXISTS plan text NOT NULL DEFAULT 'free'");
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS app_users_unverified_created_idx
@@ -1566,6 +1597,104 @@ function passwordResetRequestedPayload() {
   };
 }
 
+function renderLegalPage(title, description, bodyHtml) {
+  return `
+    <!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>${escapeHtml(title)} | IELTS Study Hub</title>
+        <meta name="description" content="${escapeHtml(description)}" />
+        <link rel="stylesheet" href="/styles.css" />
+      </head>
+      <body class="legal-page">
+        <header class="site-header legal-header">
+          <a class="brand" href="/" aria-label="IELTS Study Hub home">
+            <span class="brand-mark">I</span>
+            <span>IELTS Study Hub</span>
+          </a>
+          <nav class="legal-page-nav" aria-label="Legal navigation">
+            <a class="nav-link" href="/">Home</a>
+            <a class="nav-link" href="/terms">Terms</a>
+            <a class="nav-link" href="/privacy">Privacy</a>
+          </nav>
+        </header>
+        <main class="legal-shell">
+          <article class="legal-document">
+            <div class="legal-title">
+              <p class="eyebrow">IELTS Study Hub</p>
+              <h1>${escapeHtml(title)}</h1>
+              <p>Effective ${escapeHtml(policyVersion)}. This page is a practical notice, not legal advice.</p>
+            </div>
+            ${bodyHtml}
+          </article>
+        </main>
+        <footer class="legal-copyright">Copyright 2026 Appliva LLC</footer>
+      </body>
+    </html>
+  `;
+}
+
+function renderTermsPage() {
+  return renderLegalPage(
+    "Terms of Service",
+    "Terms for using IELTS Study Hub.",
+    `
+      <h2>Using the service</h2>
+      <p>IELTS Study Hub provides vocabulary practice, sentence translation, text-to-speech, and related study tools. You are responsible for how you use study content and for keeping your account credentials secure.</p>
+      <h2>Educational content</h2>
+      <p>AI-generated examples, translations, and feedback are for study support only. They may be incomplete or incorrect, and IELTS Study Hub does not guarantee any exam score, admission result, or official IELTS outcome.</p>
+      <h2>Use of AI</h2>
+      <p>IELTS Study Hub uses artificial intelligence services to generate vocabulary examples, translations, writing feedback, and speech audio. Review AI output before relying on it, especially for exam preparation, academic work, or important decisions.</p>
+      <h2>Accounts and acceptable use</h2>
+      <ul>
+        <li>Provide accurate account information and verify your email address when required.</li>
+        <li>Do not abuse quotas, attempt to bypass access controls, scrape the service, or interfere with other users.</li>
+        <li>Do not submit content that is unlawful, harmful, or violates another person's rights.</li>
+      </ul>
+      <h2>Fair use</h2>
+      <p>Use IELTS Study Hub in a reasonable way for personal study and learning. We may apply rate limits, quotas, temporary restrictions, or account review when usage is excessive, automated, abusive, harmful to service reliability, or outside the intended educational purpose.</p>
+      <h2>Billing</h2>
+      <p>Paid plans, when offered, are processed by Stripe. Billing terms shown at checkout apply to the purchase. Deleting a local app account does not automatically cancel a Stripe subscription unless the checkout or account process says otherwise.</p>
+      <h2>Availability and changes</h2>
+      <p>The service may change, be limited, or be unavailable at times. We may update these terms when the service changes. Material changes should be presented clearly rather than applied secretly.</p>
+      <h2>Contact</h2>
+      <p>Questions about these terms can be sent to ${escapeHtml(privacyContactText())}.</p>
+    `,
+  );
+}
+
+function renderPrivacyPage() {
+  return renderLegalPage(
+    "Privacy Policy",
+    "Privacy notice for IELTS Study Hub.",
+    `
+      <h2>Information we collect</h2>
+      <p>We collect account information such as email address, password hash, email verification status, plan, signup consent records, session cookies, guest identifiers, usage and quota records, and content you submit for vocabulary, translation, or text-to-speech features.</p>
+      <h2>How we use information</h2>
+      <ul>
+        <li>To create accounts, verify email addresses, authenticate sessions, and prevent abuse.</li>
+        <li>To provide study features, enforce free or paid plan limits, troubleshoot errors, and measure service health.</li>
+        <li>To monitor fair use, detect abuse, protect service reliability, and apply quotas or rate limits.</li>
+        <li>To send verification and password reset emails.</li>
+      </ul>
+      <h2>Third-party processors</h2>
+      <p>Submitted study content may be sent to AI providers to generate translations, vocabulary, feedback, or audio. Billing information may be processed by Stripe. Email delivery may use the configured SMTP provider. These providers process information to support the requested service.</p>
+      <h2>AI processing</h2>
+      <p>When you use AI-powered features, the text you submit and related request details may be processed by AI providers to return the requested study output. Do not submit sensitive personal information that is not needed for your study request.</p>
+      <h2>Cookies and retention</h2>
+      <p>We use essential cookies or identifiers for login sessions, guest quota tracking, and security. We retain account, usage, and operational records for as long as needed to provide the service, enforce limits, resolve disputes, and meet legal or security needs.</p>
+      <h2>Your choices and rights</h2>
+      <p>You may request access, correction, deletion, or export of your account information, and you may object to or restrict certain processing where applicable law provides those rights. We do not claim to sell personal information.</p>
+      <h2>Security and children</h2>
+      <p>We use reasonable technical safeguards such as password hashing, session cookies, and server-side access controls. IELTS Study Hub is intended for learners old enough to manage an online study account and is not directed to young children.</p>
+      <h2>Contact</h2>
+      <p>Privacy requests can be sent to ${escapeHtml(privacyContactText())}. We may need to verify your identity before acting on account requests.</p>
+    `,
+  );
+}
+
 function renderPasswordResetPage(token) {
   return `
     <!doctype html>
@@ -1869,6 +1998,9 @@ app.post("/api/signup", async (req, res, next) => {
   if (validationError) {
     return res.status(400).json({ error: validationError });
   }
+  if (req.body?.acceptedTerms !== true) {
+    return res.status(400).json({ error: "Agree to the Terms and Privacy Policy to create an account." });
+  }
 
   const signupKeys = signupRateLimitKeys(req, email);
   const activeLockout = getActiveSignupLockout(signupKeys);
@@ -1894,13 +2026,16 @@ app.post("/api/signup", async (req, res, next) => {
           email,
           password_hash,
           email_verification_token_hash,
-          email_verification_expires_at
+          email_verification_expires_at,
+          terms_accepted_at,
+          terms_version,
+          privacy_version
         )
-        VALUES ($1, $2, $3, now() + interval '24 hours')
+        VALUES ($1, $2, $3, now() + interval '24 hours', now(), $4, $5)
         ON CONFLICT (email) DO NOTHING
         RETURNING email
       `,
-      [email, passwordHash, verificationTokenHash],
+      [email, passwordHash, verificationTokenHash, policyVersion, policyVersion],
     );
 
     if (!result.rows[0]) {
@@ -2369,6 +2504,14 @@ app.get("/", (_req, res) => {
 
 app.get("/admin", requireAdminPage, (_req, res) => {
   res.sendFile(path.join(__dirname, "admin.html"));
+});
+
+app.get("/terms", (_req, res) => {
+  res.type("html").send(renderTermsPage());
+});
+
+app.get("/privacy", (_req, res) => {
+  res.type("html").send(renderPrivacyPage());
 });
 
 app.get(["/app.js", "/admin.js", "/styles.css"], (req, res) => {
