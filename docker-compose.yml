@@ -53,7 +53,10 @@ services:
         required: false
     environment:
       <<: *app-env
-      DATABASE_URL: ${DATABASE_URL:-postgresql://${POSTGRES_USER:-ielts}:${POSTGRES_PASSWORD:-ielts_password}@postgres-dev:5432/${POSTGRES_DB:-ielts}}
+      DATABASE_HOST: postgres-dev
+      DATABASE_NAME: ${POSTGRES_DB:-ielts}
+      DATABASE_USER: ${POSTGRES_USER:-ielts}
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-capis2256@gmail.com,yeffry@appliva.io}
       SESSION_SECRET: ${SESSION_SECRET:-}
     volumes:
