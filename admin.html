@@ -30,6 +30,7 @@
         <div class="admin-table-header">
           <span>User</span>
           <span>Plan</span>
+          <span>Current usage</span>
           <span>Status</span>
           <span>Joined</span>
           <span aria-label="Actions"></span>
@@ -37,6 +38,14 @@
         <div id="adminUsersList" class="admin-users-list"></div>
       </section>
     </main>
+
+    <dialog id="adminConfirmDialog" class="confirm-dialog" aria-labelledby="adminConfirmTitle">
+      <form method="dialog">
+        <div class="confirm-dialog-header"><h2 id="adminConfirmTitle">Confirm action</h2><button class="icon-button" type="submit" value="cancel" aria-label="Close"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+        <p id="adminConfirmMessage"></p>
+        <div class="confirm-dialog-actions"><button class="secondary-button" type="submit" value="cancel">Cancel</button><button id="adminConfirmSubmit" type="submit" value="confirm">Confirm</button></div>
+      </form>
+    </dialog>
 
     <script src="/admin.js"></script>
   </body>

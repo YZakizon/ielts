@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>Dashboard | IELTS Study Hub</title><link rel="stylesheet" href="/styles.css" /></head>
+  <body class="dashboard-page">
+    <header class="site-header dashboard-header"><a class="brand" href="/"><span class="brand-mark">I</span><span>IELTS Study Hub</span></a><a class="nav-link" href="/">Back to study</a></header>
+    <main class="dashboard-shell">
+      <aside class="dashboard-sidebar" aria-label="Dashboard menu"><div><p class="eyebrow">Dashboard</p><strong id="dashboardEmail">Account</strong></div><nav><a class="active" href="#subscription">Subscription</a></nav></aside>
+      <div class="dashboard-content">
+        <section class="dashboard-title"><div><p class="eyebrow">Subscription</p><h1>Plan and usage</h1></div><span id="dashboardPlan" class="dashboard-plan">Loading...</span></section>
+        <section id="subscription" class="panel dashboard-usage">
+          <div><span>Vocabulary translations</span><strong id="dashboardVocab">Loading...</strong></div>
+          <div><span>Sentence translations</span><strong id="dashboardSentences">Loading...</strong></div>
+          <div><span>Billing status</span><strong id="dashboardStatusValue">Loading...</strong></div>
+          <div><span>Current period</span><strong id="dashboardPeriod">Loading...</strong></div>
+        </section>
+        <p id="dashboardStatus" class="status-text" role="status"></p>
+      </div>
+    </main>
+    <script src="/dashboard.js"></script>
+  </body>
+</html>
