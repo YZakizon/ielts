@@ -916,6 +916,31 @@ button:hover {
   padding: 48px 24px 72px;
 }
 
+.dashboard-page { background: #f5f7f6; }
+.dashboard-header { min-height: 58px; padding-top: 8px; padding-bottom: 8px; }
+.dashboard-shell { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 18px; width: min(1080px, calc(100% - 28px)); margin: 18px auto; }
+.dashboard-sidebar { align-self: start; padding: 14px; border-right: 1px solid var(--line); }
+.dashboard-sidebar strong { display: block; margin-top: 4px; font-size: 0.8rem; overflow-wrap: anywhere; }
+.dashboard-sidebar nav { display: grid; margin-top: 16px; }
+.dashboard-sidebar nav a { min-height: 36px; padding: 9px 10px; border-radius: 6px; color: var(--ink); font-weight: 800; text-decoration: none; }
+.dashboard-sidebar nav a.active { background: #e6f1ed; color: var(--accent-dark); }
+.dashboard-content { min-width: 0; }
+.dashboard-title { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.dashboard-title h1 { margin: 2px 0 0; font-size: 1.45rem; }
+.dashboard-plan { padding: 6px 9px; border-radius: 6px; background: #e6f1ed; color: var(--accent-dark); font-size: 0.78rem; font-weight: 900; }
+.dashboard-usage { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.dashboard-usage > div { min-width: 0; padding: 14px; border-bottom: 1px solid var(--line); }
+.dashboard-usage span, .dashboard-usage strong { display: block; }
+.dashboard-usage span { margin-bottom: 5px; color: var(--muted); font-size: 0.72rem; font-weight: 900; text-transform: uppercase; }
+.dashboard-usage strong { font-size: 0.9rem; overflow-wrap: anywhere; }
+
+@media (max-width: 700px) {
+  .dashboard-shell { grid-template-columns: 1fr; }
+  .dashboard-sidebar { padding: 10px 0; border-right: 0; border-bottom: 1px solid var(--line); }
+  .dashboard-sidebar nav { margin-top: 10px; }
+  .dashboard-usage { grid-template-columns: 1fr; }
+}
+
 .subscription-heading {
   max-width: 680px;
   margin-bottom: 28px;
@@ -1155,12 +1180,28 @@ button:hover {
 
 .admin-panel {
   display: grid;
+  overflow: visible;
 }
+
+.admin-row-menu-root { position: relative; justify-self: end; }
+.admin-row-menu { position: absolute; top: calc(100% + 4px); right: 0; z-index: 30; min-width: 180px; padding: 5px; border: 1px solid var(--line); border-radius: 8px; background: #fff; box-shadow: var(--shadow); }
+.admin-row-menu button { display: flex; width: 100%; min-height: 36px; align-items: center; gap: 8px; padding: 8px 10px; border: 0; background: transparent; color: var(--ink); text-align: left; }
+.admin-row-menu button:hover { background: #edf5f2; }
+.admin-row-menu .danger-menu-item { color: #a33d2b; }
+.admin-row-menu svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; }
+.confirm-dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); box-shadow: 0 24px 64px rgba(20, 32, 28, 0.24); }
+.confirm-dialog::backdrop { background: rgba(18, 28, 25, 0.52); }
+.confirm-dialog form { display: grid; gap: 18px; padding: 20px; }
+.confirm-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.confirm-dialog h2, .confirm-dialog p { margin: 0; }
+.confirm-dialog h2 { font-size: 1.15rem; }
+.confirm-dialog p { color: var(--muted); line-height: 1.55; }
+.confirm-dialog-actions { display: flex; justify-content: end; gap: 10px; }
 
 .admin-table-header,
 .admin-user-row {
   display: grid;
-  grid-template-columns: minmax(240px, 1.35fr) minmax(170px, 0.85fr) minmax(150px, 0.75fr) minmax(120px, 0.55fr) 48px;
+  grid-template-columns: minmax(210px, 1.2fr) minmax(140px, 0.7fr) minmax(260px, 1.35fr) minmax(130px, 0.65fr) minmax(110px, 0.5fr) 48px;
   align-items: center;
   gap: 12px;
 }
@@ -1231,6 +1272,22 @@ button:hover {
   font: inherit;
   font-size: 0.9rem;
   font-weight: 800;
+}
+
+.admin-usage {
+  display: grid;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.admin-usage span {
+  overflow-wrap: anywhere;
+}
+
+.admin-usage b {
+  color: var(--ink);
 }
 
 .danger-icon-button {
@@ -1772,7 +1829,8 @@ button:hover {
   }
 
   .admin-user-row > span,
-  .admin-user-row > label {
+  .admin-user-row > label,
+  .admin-user-row > .admin-usage {
     grid-column: 1 / -1;
   }
 

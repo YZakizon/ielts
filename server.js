@@ -1342,7 +1342,60 @@ async function lookupStripeBilling(email) {
   };
 }
 
-async function adminUserPayload(row) {
+async function getAdminUserUsage(userIds) {
+  if (!userIds.length) return new Map();
+
+  const result = await dbPool.query(
+    `
+      SELECT
+        user_id,
+        COUNT(*) FILTER (
+          WHERE usage_type = 'request' AND created_at >= now() - interval '1 minute'
+        )::integer AS minute_count,
+        COUNT(*) FILTER (
+          WHERE usage_type = 'request' AND created_at >= now() - interval '1 hour'
+        )::integer AS hour_count,
+        COUNT(*) FILTER (
+          WHERE usage_type = 'request' AND created_at >= now() - interval '1 day'
+        )::integer AS day_count,
+        COALESCE(SUM(units) FILTER (
+          WHERE usage_type = 'vocab'
+            AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        ), 0)::integer AS vocab_used,
+        COALESCE(SUM(units) FILTER (
+          WHERE usage_type = 'translation'
+            AND created_at >= date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
+        ), 0)::integer AS translation_used
+      FROM free_account_usage_events
+      WHERE user_id = ANY($1::bigint[])
+        AND created_at >= now() - interval '1 day'
+      GROUP BY user_id
+    `,
+    [userIds],
+  );
+
+  return new Map(result.rows.map((row) => [Number(row.user_id), row]));
+}
+
+function adminUsagePayload(subscription, usage = {}) {
+  const subscriptionUsage = subscription?.usage;
+  return {
+    vocabUsedToday: Number(subscriptionUsage?.vocabulary?.used || 0),
+    vocabDailyLimit: subscriptionUsage?.vocabulary?.limit ?? 0,
+    translationUsedToday: Number(subscriptionUsage?.sentence?.used || 0),
+    translationDailyLimit: subscriptionUsage?.sentence?.limit ?? 0,
+    requestLimits:
+      !subscription?.plan
+        ? {
+            minute: { used: Number(usage.minute_count || 0), limit: freeAccountLimitPerMinute },
+            hour: { used: Number(usage.hour_count || 0), limit: freeAccountLimitPerHour },
+            day: { used: Number(usage.day_count || 0), limit: freeAccountLimitPerDay },
+          }
+        : null,
+  };
+}
+
+async function adminUserPayload(row, usage = {}) {
   const isAdmin = isAdminUser(row);
   try {
     const subscription = await subscriptionService.getSubscriptionSummary(row.id);
@@ -1360,6 +1413,7 @@ async function adminUserPayload(row) {
       billingPlan: subscription.planName || "None",
       billingStatus: subscription.status,
       subscription,
+      usage: adminUsagePayload(subscription, usage),
     };
   } catch (error) {
     return {
@@ -1378,6 +1432,7 @@ async function adminUserPayload(row) {
       stripeCustomerId: null,
       stripeSubscriptionId: null,
       billingError: error.message,
+      usage: adminUsagePayload(null, usage),
     };
   }
 }
@@ -1894,6 +1949,14 @@ app.get("/api/billing/usage", requireAuth, async (req, res, next) => {
   catch (error) { next(error); }
 });
 
+app.get("/dashboard", async (req, res, next) => {
+  try {
+    const user = await readUserFromSession(req);
+    if (!user) return res.redirect("/?loginRequired=1");
+    res.sendFile(path.join(__dirname, "dashboard.html"));
+  } catch (error) { next(error); }
+});
+
 async function ensureStripeCustomer(req) {
   const existing = await dbPool.query("SELECT stripe_customer_id,email FROM app_users WHERE id=$1", [req.user.id]);
   if (existing.rows[0]?.stripe_customer_id) return existing.rows[0].stripe_customer_id;
@@ -2367,9 +2430,10 @@ app.get("/api/admin/users", requireAdmin, async (_req, res, next) => {
       `,
       [adminUserLimit],
     );
+    const usageByUserId = await getAdminUserUsage(result.rows.map((row) => Number(row.id)));
     const users = [];
     for (const row of result.rows) {
-      users.push(await adminUserPayload(row));
+      users.push(await adminUserPayload(row, usageByUserId.get(Number(row.id))));
     }
     res.json({
       users,
@@ -2514,7 +2578,7 @@ app.get("/privacy", (_req, res) => {
   res.type("html").send(renderPrivacyPage());
 });
 
-app.get(["/app.js", "/admin.js", "/styles.css"], (req, res) => {
+app.get(["/app.js", "/admin.js", "/dashboard.js", "/styles.css"], (req, res) => {
   res.sendFile(path.join(__dirname, req.path));
 });
 

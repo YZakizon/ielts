@@ -1,5 +1,9 @@
 const adminStatus = document.querySelector("#adminStatus");
 const adminUsersList = document.querySelector("#adminUsersList");
+const adminConfirmDialog = document.querySelector("#adminConfirmDialog");
+const adminConfirmTitle = document.querySelector("#adminConfirmTitle");
+const adminConfirmMessage = document.querySelector("#adminConfirmMessage");
+const adminConfirmSubmit = document.querySelector("#adminConfirmSubmit");
 const accountPlanOptions = [
   { value: "none", label: "No subscription" },
   { value: "premium", label: "Premium" },
@@ -44,6 +48,19 @@ function deleteIcon() {
   `;
 }
 
+function moreIcon() {
+  return `<svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="5" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="12" cy="19" r="1" /></svg>`;
+}
+
+function confirmAdminAction(title, message) {
+  adminConfirmTitle.textContent = title;
+  adminConfirmMessage.textContent = message;
+  adminConfirmSubmit.textContent = title;
+  adminConfirmDialog.returnValue = "";
+  adminConfirmDialog.showModal();
+  return new Promise((resolve) => adminConfirmDialog.addEventListener("close", () => resolve(adminConfirmDialog.returnValue === "confirm"), { once: true }));
+}
+
 function renderPlanSelect(user) {
   const localPlan = String(user.subscription?.plan || "none").toLowerCase();
   const options = accountPlanOptions
@@ -67,6 +84,32 @@ function renderPlanSelect(user) {
   `;
 }
 
+function formatUsageValue(used, limit) {
+  return `${Number(used || 0).toLocaleString()} / ${limit === null ? "Unlimited" : Number(limit).toLocaleString()}`;
+}
+
+function renderUsage(user) {
+  const usage = user.usage || {};
+  const requests = usage.requestLimits;
+  const requestLine = requests
+    ? `<span><b>Requests</b> ${escapeHtml(requests.minute?.used || 0)}/${escapeHtml(
+        requests.minute?.limit || 0,
+      )} min · ${escapeHtml(requests.hour?.used || 0)}/${escapeHtml(requests.hour?.limit || 0)} hr · ${escapeHtml(
+        requests.day?.used || 0,
+      )}/${escapeHtml(requests.day?.limit || 0)} day</span>`
+    : `<span><b>Requests</b> No rate limit</span>`;
+
+  return `
+    <div class="admin-usage" aria-label="Current usage and limits for ${escapeHtml(user.email)}">
+      ${requestLine}
+      <span><b>Vocabulary</b> ${escapeHtml(formatUsageValue(usage.vocabUsedToday, usage.vocabDailyLimit))} today</span>
+      <span><b>Translations</b> ${escapeHtml(
+        formatUsageValue(usage.translationUsedToday, usage.translationDailyLimit),
+      )} today</span>
+    </div>
+  `;
+}
+
 function renderUsers(users) {
   if (!users.length) {
     adminUsersList.innerHTML = `<p class="history-empty">No users found.</p>`;
@@ -82,26 +125,19 @@ function renderUsers(users) {
             <small>${user.isAdmin ? "Admin user" : user.emailVerified ? "Verified" : "Email not verified"}</small>
           </div>
           ${renderPlanSelect(user)}
+          ${renderUsage(user)}
           <span>${escapeHtml(billingStatusLabel(user))}</span>
           <span>${escapeHtml(formatDate(user.createdAt))}</span>
-          <button class="icon-button danger-icon-button" type="button" data-delete-user-id="${escapeHtml(
-            user.id,
-          )}" aria-label="Delete ${escapeHtml(user.email)}">
-            ${deleteIcon()}
-          </button>
-          <details class="admin-subscription-details">
-            <summary>Subscription details</summary>
-            <div><span>Source</span><strong>${escapeHtml(user.subscription?.source || "None")}</strong></div>
-            <div><span>Expires</span><strong>${escapeHtml(user.subscription?.expiresAt ? formatDate(user.subscription.expiresAt) : "Never")}</strong></div>
-            <div><span>Vocabulary</span><strong>${user.subscription?.usage ? `${user.subscription.usage.vocabulary.used} / ${user.subscription.usage.vocabulary.limit}` : "Locked"}</strong></div>
-            <div><span>Sentence</span><strong>${user.subscription?.usage ? `${user.subscription.usage.sentence.used} / ${user.subscription.usage.sentence.limit}` : "Locked"}</strong></div>
-            <div class="admin-usage-actions">
-              <button type="button" class="ghost-button" data-adjust-usage="vocabulary_translation">Adjust vocabulary</button>
-              <button type="button" class="ghost-button" data-adjust-usage="sentence_translation">Adjust sentence</button>
-              <button type="button" class="ghost-button" data-view-usage>View history</button>
+          <div class="admin-row-menu-root">
+            <button class="icon-button" type="button" data-user-menu-toggle aria-label="Actions for ${escapeHtml(user.email)}" aria-haspopup="menu" aria-expanded="false">${moreIcon()}</button>
+            <div class="admin-row-menu hidden" role="menu">
+              <button type="button" data-adjust-usage="vocabulary_translation" role="menuitem">Adjust vocabulary</button>
+              <button type="button" data-adjust-usage="sentence_translation" role="menuitem">Adjust sentence</button>
+              <button type="button" data-view-usage role="menuitem">View history</button>
+              <button class="danger-menu-item" type="button" data-delete-user-id="${escapeHtml(user.id)}" role="menuitem">${deleteIcon()} Delete user</button>
             </div>
-            <div class="admin-usage-history" data-usage-history></div>
-          </details>
+          </div>
+          <div class="admin-usage-history" data-usage-history></div>
         </article>
       `,
     )
@@ -158,7 +194,7 @@ async function updateUserPlan(userId, plan, select) {
 }
 
 async function deleteUser(userId, email) {
-  if (!window.confirm(`Delete ${email}? This permanently removes the local account.`)) {
+  if (!(await confirmAdminAction("Delete user", `Delete ${email}? This permanently removes the local account and cannot be undone.`))) {
     return;
   }
 
@@ -201,6 +237,15 @@ async function viewUsageHistory(row) {
 }
 
 adminUsersList.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-user-menu-toggle]");
+  if (toggle) {
+    const menu = toggle.nextElementSibling;
+    const open = menu.classList.contains("hidden");
+    document.querySelectorAll(".admin-row-menu").forEach((item) => item.classList.add("hidden"));
+    menu.classList.toggle("hidden", !open);
+    toggle.setAttribute("aria-expanded", String(open));
+    return;
+  }
   const adjust = event.target.closest("[data-adjust-usage]");
   const history = event.target.closest("[data-view-usage]");
   const actionRow = event.target.closest(".admin-user-row");
@@ -218,6 +263,12 @@ adminUsersList.addEventListener("click", (event) => {
   const row = button.closest(".admin-user-row");
   const email = row?.querySelector("strong")?.textContent || "this user";
   deleteUser(button.dataset.deleteUserId, email);
+});
+
+adminConfirmDialog.addEventListener("click", (event) => { if (event.target === adminConfirmDialog) adminConfirmDialog.close("cancel"); });
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".admin-row-menu-root")) return;
+  document.querySelectorAll(".admin-row-menu").forEach((menu) => menu.classList.add("hidden"));
 });
 
 adminUsersList.addEventListener("change", (event) => {
