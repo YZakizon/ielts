@@ -28,16 +28,16 @@ SMTP_USER=
 SMTP_PASSWORD=
 SMTP_FROM=
 STRIPE_SECRET_KEY=
+STRIPE_PUBLISHABLE_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_PREMIUM_MONTHLY=
+STRIPE_PRICE_PRO_MONTHLY=
+STRIPE_PAST_DUE_GRACE_DAYS=0
 ADMIN_USER_LIMIT=100
 SMTP_TIMEOUT_MS=5000
 LOGIN_RATE_LIMIT_WINDOW_MS=900000
 LOGIN_RATE_LIMIT_MAX=5
 LOGIN_RATE_LIMIT_LOCKOUT_MS=900000
-FREE_SESSION_LIMIT=5
-FREE_VOCAB_GENERATION_LIMIT=2
-FREE_ACCOUNT_LIMIT_PER_MINUTE=2
-FREE_ACCOUNT_LIMIT_PER_HOUR=20
-FREE_ACCOUNT_LIMIT_PER_DAY=50
 ```
 
 The `td340` Compose profile requires this `.env` and passes it into the app
@@ -46,23 +46,18 @@ must set a container-only constant.
 
 `ADMIN_EMAILS` is a comma-separated list. Any signed-up user whose email is in
 that list is treated as an admin.
-Admins can open `/admin` to list registered users and display billing plans
-from Stripe by matching each user email to Stripe customers and subscriptions.
-Set `STRIPE_SECRET_KEY` to enable live billing lookup; without it, users appear
-as free or admin. Deleting a user from the admin page permanently removes the
-local app account only and does not cancel Stripe subscriptions.
+Admins can open `/admin` to grant permanent or expiring Premium and Pro access.
+Stripe customers are linked by their stored customer ID, never by email lookup.
+Create monthly Stripe Prices for Premium and Pro, place their IDs in the matching
+environment variables, enable the Stripe Customer Portal, and register
+`https://ielts.appliva.io/api/webhooks/stripe` for Checkout Session, customer
+subscription, invoice paid, and invoice payment failed events. Use the endpoint's
+signing secret as `STRIPE_WEBHOOK_SECRET`.
 Failed login attempts are rate-limited by IP and email. Signup sends the email
 verification link through the configured SMTP server. Without SMTP, the app logs
 the verification link server-side for local development only.
-Anonymous visitors can use up to `FREE_SESSION_LIMIT` sentence translations and
-`FREE_VOCAB_GENERATION_LIMIT` AI vocabulary generations before creating an
-account or logging in. The anonymous trial is enforced by both the guest cookie
-and a server-side hashed requester-IP quota, so clearing cookies does not reset
-AI access.
-Logged-in free accounts can make up to `FREE_ACCOUNT_LIMIT_PER_MINUTE` combined
-AI requests per minute, `FREE_ACCOUNT_LIMIT_PER_HOUR` per hour, and
-`FREE_ACCOUNT_LIMIT_PER_DAY` per day across vocabulary generation, vocabulary
-search, and sentence translation.
+Translation endpoints require a verified login and either an active Stripe-paid
+subscription or an active administrator grant. There is no free plan or trial.
 
 2. Deploy the app:
 
