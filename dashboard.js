@@ -17,7 +17,7 @@ async function loadDashboard() {
   document.querySelector("#dashboardVocab").textContent = usedLimit(subscription.usage?.vocabulary);
   document.querySelector("#dashboardSentences").textContent = usedLimit(subscription.usage?.sentence);
   document.querySelector("#dashboardStatusValue").textContent = subscription.status || "Inactive";
-  document.querySelector("#dashboardPeriod").textContent = subscription.currentPeriodEnd ? `Through ${formatDate(subscription.currentPeriodEnd)}` : "Not active";
+  document.querySelector("#dashboardPeriod").textContent = subscription.periodEnd ? `Through ${formatDate(subscription.periodEnd)}` : "Not active";
 }
 
 loadDashboard().catch((error) => { document.querySelector("#dashboardStatus").textContent = error.message; });

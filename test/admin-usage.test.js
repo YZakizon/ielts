@@ -5,11 +5,17 @@ const path = require("node:path");
 
 const serverSource = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
 const adminSource = fs.readFileSync(path.join(__dirname, "..", "admin.js"), "utf8");
+const dashboardSource = fs.readFileSync(path.join(__dirname, "..", "dashboard.js"), "utf8");
 
 test("admin users API aggregates current usage for all listed users", () => {
   assert.match(serverSource, /user_id = ANY\(\$1::bigint\[\]\)/);
   assert.match(serverSource, /usageByUserId\.get\(Number\(row\.id\)\)/);
   assert.match(serverSource, /usage: adminUsagePayload\(subscription, usage\)/);
+});
+
+test("dashboard uses subscription summary period fields", () => {
+  assert.match(dashboardSource, /subscription\.periodEnd/);
+  assert.doesNotMatch(dashboardSource, /subscription\.currentPeriodEnd/);
 });
 
 test("admin usage reports rolling free request limits and daily plan limits", () => {
