@@ -39,7 +39,9 @@ services:
     volumes:
       - ielts-dev-postgres:/var/lib/postgresql/data
     networks:
-      - ielts-dev-internal
+      ielts-dev-internal:
+        aliases:
+          - postgres
     restart: unless-stopped
 
   ielts-dev:

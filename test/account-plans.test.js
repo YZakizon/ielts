@@ -7,12 +7,20 @@ const {
   effectiveAccountPlan,
   normalizeAccountPlan,
   planUsagePayload,
+  ttsLimitForPlan,
 } = require("../account-plans");
 
 test("normalizes known account plans and falls back to free", () => {
   assert.equal(normalizeAccountPlan("premium"), "premium");
   assert.equal(normalizeAccountPlan("Ultimate"), "ultimate");
   assert.equal(normalizeAccountPlan("unknown"), "free");
+});
+
+test("uses plan-specific TTS time windows and limits", () => {
+  assert.deepEqual(ttsLimitForPlan("free"), { limitMs: 600000, window: "hour" });
+  assert.deepEqual(ttsLimitForPlan("premium"), { limitMs: 3000000, window: "day" });
+  assert.deepEqual(ttsLimitForPlan("ultimate"), { limitMs: 5400000, window: "day" });
+  assert.deepEqual(ttsLimitForPlan("admin"), { limitMs: null, window: "day" });
 });
 
 test("uses configured Premium and Ultimate daily limits", () => {
