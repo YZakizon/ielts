@@ -695,6 +695,8 @@ const levelSelect = document.querySelector("#levelSelect");
 const englishVariantSelect = document.querySelector("#englishVariantSelect");
 const vocabTargetLanguageSelect = document.querySelector("#vocabTargetLanguageSelect");
 const generateBtn = document.querySelector("#generateBtn");
+const generateBtnLabel = generateBtn.querySelector(".button-label");
+const generateBtnSpinner = generateBtn.querySelector(".button-spinner");
 const oneByOneToggle = document.querySelector("#oneByOneToggle");
 const prevWordBtn = document.querySelector("#prevWordBtn");
 const nextWordBtn = document.querySelector("#nextWordBtn");
@@ -793,6 +795,15 @@ const translationLanguageLabels = {
   german: "German",
   arabic: "Arabic",
   "chinese-simplified": "Chinese Simplified",
+  portuguese: "Portuguese",
+  italian: "Italian",
+  hindi: "Hindi",
+  urdu: "Urdu",
+  thai: "Thai",
+  vietnamese: "Vietnamese",
+  turkish: "Turkish",
+  russian: "Russian",
+  polish: "Polish",
   japanese: "Japanese",
   korean: "Korean",
 };
@@ -1412,12 +1423,24 @@ function updateTranslationLanguageLabels() {
   targetLanguageLabel.textContent = "Target language";
 }
 
+function setGenerateLoading(isLoading) {
+  [levelSelect, englishVariantSelect, vocabTargetLanguageSelect].forEach((control) => {
+    control.disabled = isLoading;
+  });
+  generateBtn.disabled = isLoading;
+  generateBtn.setAttribute("aria-busy", String(isLoading));
+  generateBtnLabel.textContent = isLoading ? "Generating..." : "Generate";
+  generateBtnSpinner.classList.toggle("hidden", !isLoading);
+}
+
 async function generateWords() {
+  if (generateBtn.disabled) return;
+
   const level = levelSelect.value;
   const variant = englishVariantSelect.value;
   const targetLanguage = vocabTargetLanguageSelect.value;
 
-  generateBtn.disabled = true;
+  setGenerateLoading(true);
   currentWords = fallbackWords(level);
   selectedWord = null;
   currentWordIndex = 0;
@@ -1447,7 +1470,7 @@ async function generateWords() {
     setStatus(message, true);
     saveAppState();
   } finally {
-    generateBtn.disabled = false;
+    setGenerateLoading(false);
   }
 }
 
