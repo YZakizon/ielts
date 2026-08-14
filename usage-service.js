@@ -33,8 +33,8 @@ class UsageService {
       if (duplicate.rowCount) throw new UsageError("DUPLICATE_TRANSLATION_REQUEST", {}, 409);
       const locked = await client.query(`SELECT ${definition.used} AS used, ${definition.limit} AS limit FROM usage_periods WHERE id=$1 FOR UPDATE`, [period.id]);
       const used = Number(locked.rows[0].used);
-      const limit = Number(locked.rows[0].limit);
-      if (used >= limit) {
+      const limit = locked.rows[0].limit === null ? null : Number(locked.rows[0].limit);
+      if (limit !== null && used >= limit) {
         const code = type === "vocabulary" ? "VOCABULARY_LIMIT_REACHED" : "SENTENCE_LIMIT_REACHED";
         throw new UsageError(code, { limit, used, remaining: 0 });
       }

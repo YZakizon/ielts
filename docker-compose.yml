@@ -5,6 +5,11 @@ x-postgres-env: &postgres-env
   POSTGRES_USER: ${POSTGRES_USER:-ielts}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
 
+x-postgres-dev-env: &postgres-dev-env
+  POSTGRES_DB: ${POSTGRES_DB:-ielts}
+  POSTGRES_USER: ${POSTGRES_USER:-ielts}
+  POSTGRES_PASSWORD: ${POSTGRES_DEV_PASSWORD:-ielts_password}
+
 x-postgres-healthcheck: &postgres-healthcheck
   test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
   interval: 5s
@@ -34,7 +39,7 @@ services:
     image: postgres:16-alpine
     container_name: ielts-dev-postgres
     command: *postgres-command
-    environment: *postgres-env
+    environment: *postgres-dev-env
     healthcheck: *postgres-healthcheck
     volumes:
       - ielts-dev-postgres:/var/lib/postgresql/data
@@ -56,11 +61,12 @@ services:
     environment:
       <<: *app-env
       DATABASE_HOST: postgres-dev
+      DATABASE_URL: ""
       DATABASE_NAME: ${POSTGRES_DB:-ielts}
       DATABASE_USER: ${POSTGRES_USER:-ielts}
-      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-ielts_password}
+      DATABASE_PASSWORD: ${POSTGRES_DEV_PASSWORD:-ielts_password}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-capis2256@gmail.com,yeffry@appliva.io}
-      SESSION_SECRET: ${SESSION_SECRET:-}
+      SESSION_SECRET: ${SESSION_SECRET:-ielts_dev_session_secret_change_me}
     volumes:
       - ielts-dev-metrics:/data
     depends_on:

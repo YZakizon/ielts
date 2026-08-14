@@ -47,6 +47,32 @@
       </form>
     </dialog>
 
+    <dialog id="adminSubscriptionDialog" class="confirm-dialog admin-subscription-dialog" aria-labelledby="adminSubscriptionTitle">
+      <form method="dialog">
+        <div class="confirm-dialog-header"><h2 id="adminSubscriptionTitle">Grant subscription</h2><button class="icon-button" type="button" data-admin-subscription-cancel aria-label="Close"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" /></svg></button></div>
+        <label>
+          Reason
+          <input id="adminSubscriptionReason" type="text" autocomplete="off" required />
+        </label>
+        <label>
+          Expires
+          <select id="adminSubscriptionExpiryPreset">
+            <option value="unlimited">Unlimited</option>
+            <option value="1-month">1 month</option>
+            <option value="3-months">3 months</option>
+            <option value="6-months">6 months</option>
+            <option value="1-year">1 year</option>
+            <option value="custom">Custom date</option>
+          </select>
+        </label>
+        <label id="adminSubscriptionCustomExpiryField" class="hidden">
+          Custom expiration date
+          <input id="adminSubscriptionCustomExpiry" type="date" />
+        </label>
+        <div class="confirm-dialog-actions"><button class="secondary-button" type="button" data-admin-subscription-cancel>Cancel</button><button type="submit" value="confirm">Apply</button></div>
+      </form>
+    </dialog>
+
     <script src="/admin.js"></script>
   </body>
 </html>

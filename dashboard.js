@@ -1,6 +1,7 @@
 function usedLimit(usage) {
   if (!usage) return "No active subscription";
-  return `${Number(usage.used || 0).toLocaleString()} / ${Number(usage.limit || 0).toLocaleString()}`;
+  const limit = usage.limit === null ? "Unlimited" : Number(usage.limit ?? 0).toLocaleString();
+  return `${Number(usage.used ?? 0).toLocaleString()} / ${limit}`;
 }
 
 function formatDate(value) {

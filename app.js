@@ -740,7 +740,6 @@ const homePageBtn = document.querySelector("#homePageBtn");
 const ieltsVocabPageBtn = document.querySelector("#ieltsVocabPageBtn");
 const sentenceTranslationPageBtn = document.querySelector("#sentenceTranslationPageBtn");
 const subscriptionPageBtn = document.querySelector("#subscriptionPageBtn");
-const subscriptionCurrent = document.querySelector("#subscriptionCurrent");
 const pricingGrid = document.querySelector("#pricingGrid");
 const billingStatus = document.querySelector("#billingStatus");
 const startVocabBtn = document.querySelector("#startVocabBtn");
@@ -1058,7 +1057,7 @@ function consumeAccessNotice() {
   history.replaceState(null, "", nextUrl || "/");
 
   if (loginRequired === "not_configured") {
-    return "Account login is not configured on the server.";
+    return "";
   }
   if (adminRequired) {
     return "Admin access required. Sign in with an admin account.";
@@ -1200,8 +1199,19 @@ function showPage(pageName, shouldUpdateHash = true) {
   }
 }
 
-function formatBillingDate(value) {
-  return value ? new Intl.DateTimeFormat(undefined, { day: "numeric", month: "long", year: "numeric" }).format(new Date(value)) : "Never";
+function formatPlanLimit(value) {
+  return value === null || value === undefined ? "Unlimited" : Number(value).toLocaleString();
+}
+
+function planFeatureList(plan) {
+  const features = [
+    `${formatPlanLimit(plan.vocabularyLimit)} vocabulary translations per month`,
+    `${formatPlanLimit(plan.sentenceLimit)} sentence translations per month`,
+    "AI-powered practice guidance for sharper IELTS study",
+  ];
+  if (plan.key === "pro") features.push("Unlimited monthly practice for intensive preparation");
+  else features.push("Balanced monthly limits for steady IELTS study");
+  return features;
 }
 
 async function loadSubscription() {
@@ -1221,26 +1231,29 @@ async function loadSubscription() {
         ? "downgrade"
         : "checkout";
     const label = subscription.plan === plan.key ? "Current plan" : action === "upgrade" ? "Upgrade to Pro" : action === "downgrade" ? "Downgrade next period" : "Subscribe";
+    const isCurrent = subscription.plan === plan.key;
+    const featureItems = planFeatureList(plan)
+      .map((feature) => `<li>${escapeHtml(feature)}</li>`)
+      .join("");
     return `
-    <article class="pricing-plan${subscription.plan === plan.key ? " current-plan" : ""}">
-      <h2>${escapeHtml(plan.name)}</h2>
-      <div class="plan-quota"><strong>${Number(plan.vocabularyLimit).toLocaleString()}</strong><span>Vocabulary translations</span></div>
-      <div class="plan-quota"><strong>${Number(plan.sentenceLimit).toLocaleString()}</strong><span>Sentence translations</span></div>
-      <button type="button" data-subscribe-plan="${escapeHtml(plan.key)}" data-plan-action="${action}" ${!plan.monthlyAvailable || subscription.plan === plan.key ? "disabled" : ""}>${label}</button>
+    <article class="pricing-plan${isCurrent ? " current-plan" : ""}">
+      <div class="plan-card-header">
+        <div>
+          <span class="plan-tier">${escapeHtml(plan.key === "pro" ? "Advanced" : "Core")}</span>
+          <h2>${escapeHtml(plan.name)}</h2>
+        </div>
+        ${isCurrent ? `<span class="current-badge">Current</span>` : ""}
+      </div>
+      <p class="plan-description">${escapeHtml(plan.description || "Monthly IELTS practice limits with secure account billing.")}</p>
+      <div class="plan-quota-grid">
+        <div class="plan-quota"><strong>${formatPlanLimit(plan.vocabularyLimit)}</strong><span>Vocabulary</span></div>
+        <div class="plan-quota"><strong>${formatPlanLimit(plan.sentenceLimit)}</strong><span>Sentence</span></div>
+      </div>
+      <ul class="plan-features">${featureItems}</ul>
+      <button type="button" data-subscribe-plan="${escapeHtml(plan.key)}" data-plan-action="${action}" ${!plan.monthlyAvailable || isCurrent ? "disabled" : ""}>${label}</button>
+      ${!plan.monthlyAvailable ? `<p class="plan-availability">Checkout unavailable until Stripe price is configured.</p>` : ""}
     </article>`;
   }).join("");
-  if (subscription.status === "active") {
-    const usage = subscription.usage;
-    subscriptionCurrent.classList.remove("hidden");
-    subscriptionCurrent.innerHTML = `
-      <div><p class="eyebrow">Current plan</p><h2>${escapeHtml(subscription.planName)}</h2><p>${escapeHtml(subscription.source === "admin" ? "Granted by administrator" : subscription.cancelAtPeriodEnd ? "Cancels at period end" : "Stripe subscription")}</p></div>
-      <div class="usage-meter"><span>Vocabulary</span><strong>${usage.vocabulary.used} / ${usage.vocabulary.limit}</strong><progress value="${usage.vocabulary.used}" max="${usage.vocabulary.limit}"></progress><small>${usage.vocabulary.remaining} remaining</small></div>
-      <div class="usage-meter"><span>Sentence</span><strong>${usage.sentence.used} / ${usage.sentence.limit}</strong><progress value="${usage.sentence.used}" max="${usage.sentence.limit}"></progress><small>${usage.sentence.remaining} remaining</small></div>
-      <div class="subscription-actions"><span>${subscription.source === "stripe" ? "Next renewal" : "Period ends"}: ${escapeHtml(formatBillingDate(subscription.periodEnd))}</span>${subscription.source === "stripe" ? `<button type="button" class="secondary-button" data-billing-action="portal">Manage subscription</button>` : ""}</div>`;
-  } else {
-    subscriptionCurrent.classList.add("hidden");
-    subscriptionCurrent.innerHTML = "";
-  }
   billingStatus.textContent = currentSession?.authenticated ? "" : "Sign in to subscribe.";
 }
 
@@ -1978,8 +1991,8 @@ async function checkSession() {
   try {
     const session = await refreshSession();
     if (!session.configured) {
-      showAuthPrompt("Account login is not configured on the server.");
-      setLoginStatus("Login is not configured on the server.", true);
+      showApp();
+      startApp();
       return;
     }
 
@@ -2145,6 +2158,10 @@ subscriptionPage.addEventListener("click", (event) => {
   const subscribe = event.target.closest("[data-subscribe-plan]");
   const action = event.target.closest("[data-billing-action]");
   if (subscribe) {
+    if (currentSession?.configured === false) {
+      billingStatus.textContent = "Account login is not configured on this server.";
+      return;
+    }
     if (!currentSession?.authenticated) return showAuthPrompt("Sign in to choose a plan.");
     const action = subscribe.dataset.planAction;
     const endpoint = action === "upgrade" ? "/api/billing/upgrade" : action === "downgrade" ? "/api/billing/downgrade" : "/api/billing/checkout";
