@@ -11,3 +11,13 @@ test("dashboard reports inactive subscriptions clearly and includes TTS usage", 
   assert.match(dashboardSource, /session\.ttsUsage/);
   assert.match(dashboardHtml, /id="dashboardTts"/);
 });
+
+test("dashboard formats unlimited subscription usage without converting null to zero", () => {
+  const functionSource = dashboardSource.match(/function usedLimit\(usage\) \{[\s\S]*?\n\}/)?.[0];
+  assert.ok(functionSource, "usedLimit should exist");
+  const usedLimit = Function(`${functionSource}; return usedLimit;`)();
+
+  assert.equal(usedLimit({ used: 5000, limit: null }), "5,000 / Unlimited");
+  assert.equal(usedLimit({ used: 5, limit: 0 }), "5 / 0");
+  assert.equal(usedLimit(null), "No active subscription");
+});
