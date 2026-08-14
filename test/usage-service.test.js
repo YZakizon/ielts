@@ -40,6 +40,13 @@ test("reservation blocks at the independent limit", async () => {
   });
 });
 
+test("reservation allows unlimited subscription periods", async () => {
+  const pool = fakePool({ used: 5000, limit: null });
+  const usage = new UsageService(pool, subscriptionService());
+  await usage.reserve(7, "vocabulary", "req-12345");
+  assert.equal(pool.state.used, 5001);
+});
+
 test("duplicate translation request is not charged again", async () => {
   const pool = fakePool({ duplicate: true });
   const usage = new UsageService(pool, subscriptionService());

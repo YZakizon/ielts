@@ -4,8 +4,8 @@ const { PLAN_DEFINITIONS, addMonth, addMonthsAnchored, stripeStatus } = require(
 
 test("subscription catalog exposes exactly Premium and Pro with independent limits", () => {
   assert.deepEqual(Object.keys(PLAN_DEFINITIONS), ["premium", "pro"]);
-  assert.deepEqual(PLAN_DEFINITIONS.premium, { name: "Premium", vocabularyLimit: 500, sentenceLimit: 500 });
-  assert.deepEqual(PLAN_DEFINITIONS.pro, { name: "Pro", vocabularyLimit: 1000, sentenceLimit: 1000 });
+  assert.deepEqual(PLAN_DEFINITIONS.premium, { name: "Premium", vocabularyLimit: 1000, sentenceLimit: 1000 });
+  assert.deepEqual(PLAN_DEFINITIONS.pro, { name: "Pro", vocabularyLimit: null, sentenceLimit: null });
 });
 
 test("admin monthly periods retain their anchor at month boundaries", () => {

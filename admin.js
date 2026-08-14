@@ -4,6 +4,12 @@ const adminConfirmDialog = document.querySelector("#adminConfirmDialog");
 const adminConfirmTitle = document.querySelector("#adminConfirmTitle");
 const adminConfirmMessage = document.querySelector("#adminConfirmMessage");
 const adminConfirmSubmit = document.querySelector("#adminConfirmSubmit");
+const adminSubscriptionDialog = document.querySelector("#adminSubscriptionDialog");
+const adminSubscriptionTitle = document.querySelector("#adminSubscriptionTitle");
+const adminSubscriptionReason = document.querySelector("#adminSubscriptionReason");
+const adminSubscriptionExpiryPreset = document.querySelector("#adminSubscriptionExpiryPreset");
+const adminSubscriptionCustomExpiryField = document.querySelector("#adminSubscriptionCustomExpiryField");
+const adminSubscriptionCustomExpiry = document.querySelector("#adminSubscriptionCustomExpiry");
 const accountPlanOptions = [
   { value: "none", label: "No subscription" },
   { value: "premium", label: "Premium" },
@@ -59,6 +65,80 @@ function confirmAdminAction(title, message) {
   adminConfirmDialog.returnValue = "";
   adminConfirmDialog.showModal();
   return new Promise((resolve) => adminConfirmDialog.addEventListener("close", () => resolve(adminConfirmDialog.returnValue === "confirm"), { once: true }));
+}
+
+function formatDateInputValue(date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function addMonthsClamped(date, months) {
+  const next = new Date(date);
+  const originalDay = next.getDate();
+  next.setDate(1);
+  next.setMonth(next.getMonth() + months);
+  next.setDate(Math.min(originalDay, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+  return next;
+}
+
+function expiryDateForPreset(preset) {
+  const now = new Date();
+  if (preset === "1-month") return addMonthsClamped(now, 1);
+  if (preset === "3-months") return addMonthsClamped(now, 3);
+  if (preset === "6-months") return addMonthsClamped(now, 6);
+  if (preset === "1-year") return addMonthsClamped(now, 12);
+  return null;
+}
+
+function expiresAtForSubscriptionChoice(preset, customDate) {
+  if (preset === "unlimited") return null;
+  const date = preset === "custom" ? new Date(`${customDate}T23:59:59Z`) : expiryDateForPreset(preset);
+  if (!date || Number.isNaN(date.getTime())) throw new Error("Choose an expiration date.");
+  return `${formatDateInputValue(date)}T23:59:59Z`;
+}
+
+function subscriptionExpiryLabel(preset) {
+  const date = expiryDateForPreset(preset);
+  return date ? formatDateInputValue(date) : "";
+}
+
+function requestSubscriptionGrant(plan) {
+  adminSubscriptionTitle.textContent = `Grant ${accountPlanOptions.find((option) => option.value === plan)?.label || "subscription"}`;
+  adminSubscriptionReason.value = "";
+  adminSubscriptionExpiryPreset.value = "unlimited";
+  adminSubscriptionCustomExpiry.value = "";
+  adminSubscriptionCustomExpiryField.classList.add("hidden");
+  adminSubscriptionDialog.returnValue = "";
+  adminSubscriptionDialog.showModal();
+  adminSubscriptionReason.focus();
+
+  return new Promise((resolve) =>
+    adminSubscriptionDialog.addEventListener(
+      "close",
+      () => {
+        if (adminSubscriptionDialog.returnValue !== "confirm") {
+          resolve(null);
+          return;
+        }
+        const reason = adminSubscriptionReason.value.trim();
+        if (!reason) {
+          resolve({ error: "A reason is required." });
+          return;
+        }
+        try {
+          resolve({
+            reason,
+            expiresAt: expiresAtForSubscriptionChoice(
+              adminSubscriptionExpiryPreset.value,
+              adminSubscriptionCustomExpiry.value,
+            ),
+          });
+        } catch (error) {
+          resolve({ error: error.message });
+        }
+      },
+      { once: true },
+    ),
+  );
 }
 
 function renderPlanSelect(user) {
@@ -173,14 +253,16 @@ async function updateUserPlan(userId, plan, select) {
   adminStatus.textContent = "Updating plan...";
 
   try {
-    const reason = window.prompt(plan === "none" ? "Reason for removing access" : "Reason for granting this subscription");
-    if (reason === null || !reason.trim()) throw new Error("A reason is required.");
-    const expiration = plan === "none" ? "" : window.prompt("Expiration date (YYYY-MM-DD), or leave blank for permanent access", "");
-    if (expiration === null) throw new Error("Subscription update cancelled.");
+    const choice = plan === "none"
+      ? { reason: window.prompt("Reason for removing access"), expiresAt: null }
+      : await requestSubscriptionGrant(plan);
+    if (!choice) throw new Error("Subscription update cancelled.");
+    if (choice.error) throw new Error(choice.error);
+    if (!choice.reason?.trim()) throw new Error("A reason is required.");
     const response = await fetch(`/api/admin/users/${encodeURIComponent(userId)}/subscription`, {
       method: plan === "none" ? "DELETE" : previousPlan === "none" ? "POST" : "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan, reason, expiresAt: expiration ? `${expiration}T23:59:59Z` : null }),
+      body: JSON.stringify({ plan, reason: choice.reason, expiresAt: choice.expiresAt }),
     });
     if (!response.ok) {
       throw new Error(await responseErrorMessage(response, "Could not update plan."));
@@ -266,6 +348,20 @@ adminUsersList.addEventListener("click", (event) => {
 });
 
 adminConfirmDialog.addEventListener("click", (event) => { if (event.target === adminConfirmDialog) adminConfirmDialog.close("cancel"); });
+adminSubscriptionDialog.addEventListener("click", (event) => { if (event.target === adminSubscriptionDialog) adminSubscriptionDialog.close("cancel"); });
+adminSubscriptionDialog.querySelectorAll("[data-admin-subscription-cancel]").forEach((button) => {
+  button.addEventListener("click", () => adminSubscriptionDialog.close("cancel"));
+});
+adminSubscriptionExpiryPreset.addEventListener("change", () => {
+  const isCustom = adminSubscriptionExpiryPreset.value === "custom";
+  adminSubscriptionCustomExpiryField.classList.toggle("hidden", !isCustom);
+  if (isCustom) {
+    adminSubscriptionCustomExpiry.value ||= formatDateInputValue(addMonthsClamped(new Date(), 1));
+    adminSubscriptionCustomExpiry.focus();
+    return;
+  }
+  adminSubscriptionCustomExpiry.value = subscriptionExpiryLabel(adminSubscriptionExpiryPreset.value);
+});
 document.addEventListener("click", (event) => {
   if (event.target.closest(".admin-row-menu-root")) return;
   document.querySelectorAll(".admin-row-menu").forEach((menu) => menu.classList.add("hidden"));

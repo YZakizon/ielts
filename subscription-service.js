@@ -1,9 +1,20 @@
 const { randomUUID } = require("crypto");
 
 const PLAN_DEFINITIONS = Object.freeze({
-  premium: { name: "Premium", vocabularyLimit: 500, sentenceLimit: 500 },
-  pro: { name: "Pro", vocabularyLimit: 1000, sentenceLimit: 1000 },
+  premium: { name: "Premium", vocabularyLimit: 1000, sentenceLimit: 1000 },
+  pro: { name: "Pro", vocabularyLimit: null, sentenceLimit: null },
 });
+
+function limitAtLeast(nextLimit, currentLimit) {
+  if (nextLimit === null || nextLimit === undefined) return true;
+  if (currentLimit === null || currentLimit === undefined) return false;
+  return Number(nextLimit) >= Number(currentLimit);
+}
+
+function remainingUsage(limit, used) {
+  if (limit === null || limit === undefined) return null;
+  return Math.max(Number(limit) - Number(used || 0), 0);
+}
 
 function addMonth(date) {
   const result = new Date(date);
@@ -151,6 +162,19 @@ class SubscriptionService {
         reason text,
         created_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE plans ALTER COLUMN vocabulary_translation_limit DROP NOT NULL;
+      ALTER TABLE plans ALTER COLUMN sentence_translation_limit DROP NOT NULL;
+      ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_vocabulary_translation_limit_check;
+      ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_sentence_translation_limit_check;
+      ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_vocabulary_translation_limit_positive;
+      ALTER TABLE plans DROP CONSTRAINT IF EXISTS plans_sentence_translation_limit_positive;
+      ALTER TABLE plans ADD CONSTRAINT plans_vocabulary_translation_limit_positive
+        CHECK (vocabulary_translation_limit IS NULL OR vocabulary_translation_limit > 0);
+      ALTER TABLE plans ADD CONSTRAINT plans_sentence_translation_limit_positive
+        CHECK (sentence_translation_limit IS NULL OR sentence_translation_limit > 0);
+      ALTER TABLE usage_periods ALTER COLUMN vocabulary_limit DROP NOT NULL;
+      ALTER TABLE usage_periods ALTER COLUMN sentence_limit DROP NOT NULL;
     `);
 
     const ids = {
@@ -181,7 +205,8 @@ class SubscriptionService {
     const result = await this.pool.query(
       `SELECT id, key, name, description, stripe_product_id, stripe_monthly_price_id,
               vocabulary_translation_limit, sentence_translation_limit, is_active, is_public
-       FROM plans WHERE is_active = true ${publicOnly ? "AND is_public = true" : ""} ORDER BY vocabulary_translation_limit`,
+       FROM plans WHERE is_active = true ${publicOnly ? "AND is_public = true" : ""}
+       ORDER BY CASE WHEN vocabulary_translation_limit IS NULL THEN 1 ELSE 0 END, vocabulary_translation_limit`,
     );
     return result.rows;
   }
@@ -261,8 +286,8 @@ class SubscriptionService {
       periodEnd: usage?.period_end || subscription.current_period_end,
       expiresAt: subscription.expires_at, cancelAtPeriodEnd: subscription.cancel_at_period_end,
       usage: usage && {
-        vocabulary: { used: usage.vocabulary_used, limit: usage.vocabulary_limit, remaining: Math.max(usage.vocabulary_limit - usage.vocabulary_used, 0) },
-        sentence: { used: usage.sentence_used, limit: usage.sentence_limit, remaining: Math.max(usage.sentence_limit - usage.sentence_used, 0) },
+        vocabulary: { used: usage.vocabulary_used, limit: usage.vocabulary_limit, remaining: remainingUsage(usage.vocabulary_limit, usage.vocabulary_used) },
+        sentence: { used: usage.sentence_used, limit: usage.sentence_limit, remaining: remainingUsage(usage.sentence_limit, usage.sentence_used) },
       },
     };
   }
@@ -276,11 +301,18 @@ class SubscriptionService {
       await client.query("BEGIN");
       const old = await this.getEffectiveSubscription(userId, client);
       if (old?.source === "admin") {
-        const isUpgrade = Number(plan.vocabulary_translation_limit) >= Number(old.vocabulary_translation_limit)
-          && Number(plan.sentence_translation_limit) >= Number(old.sentence_translation_limit);
+        const isUpgrade = limitAtLeast(plan.vocabulary_translation_limit, old.vocabulary_translation_limit)
+          && limitAtLeast(plan.sentence_translation_limit, old.sentence_translation_limit);
         if (isUpgrade) {
           await client.query("UPDATE subscriptions SET plan_id=$1,pending_plan_id=NULL,expires_at=$2,updated_at=now() WHERE id=$3", [plan.id, expiresAt, old.id]);
-          await client.query("UPDATE usage_periods SET plan_id=$1,vocabulary_limit=GREATEST(vocabulary_limit,$2),sentence_limit=GREATEST(sentence_limit,$3),updated_at=now() WHERE subscription_id=$4 AND period_start<=now() AND period_end>now()", [plan.id, plan.vocabulary_translation_limit, plan.sentence_translation_limit, old.id]);
+          await client.query(
+            `UPDATE usage_periods SET plan_id=$1,
+              vocabulary_limit=CASE WHEN $2::integer IS NULL OR vocabulary_limit IS NULL THEN NULL ELSE GREATEST(vocabulary_limit,$2) END,
+              sentence_limit=CASE WHEN $3::integer IS NULL OR sentence_limit IS NULL THEN NULL ELSE GREATEST(sentence_limit,$3) END,
+              updated_at=now()
+             WHERE subscription_id=$4 AND period_start<=now() AND period_end>now()`,
+            [plan.id, plan.vocabulary_translation_limit, plan.sentence_translation_limit, old.id],
+          );
         } else {
           await client.query("UPDATE subscriptions SET pending_plan_id=$1,expires_at=$2,updated_at=now() WHERE id=$3", [plan.id, expiresAt, old.id]);
         }
@@ -342,7 +374,10 @@ class SubscriptionService {
     if (!result.rows[0]) return null;
     const synced = { ...result.rows[0], ...plan, id: result.rows[0].id, plan_id: plan.id, user_id: user.id };
     const usage = await this.ensureUsagePeriod(synced);
-    if (usage && Number(usage.vocabulary_limit) < Number(plan.vocabulary_translation_limit)) {
+    if (usage && (
+      !limitAtLeast(usage.vocabulary_limit, plan.vocabulary_translation_limit)
+      || !limitAtLeast(usage.sentence_limit, plan.sentence_translation_limit)
+    )) {
       await this.pool.query("UPDATE usage_periods SET plan_id=$1,vocabulary_limit=$2,sentence_limit=$3,updated_at=now() WHERE id=$4", [plan.id, plan.vocabulary_translation_limit, plan.sentence_translation_limit, usage.id]);
     }
     return result.rows[0];
