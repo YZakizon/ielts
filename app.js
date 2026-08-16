@@ -1116,14 +1116,9 @@ function updateQuotaBanner(session = {}) {
   profileButtonPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
   profileMenuEmail.textContent = authenticated ? displayEmail : "";
   profileMenuPlan.textContent = authenticated && planLabel ? `${planLabel} plan` : "";
-  const hasSubscription = session.subscription?.status === "active";
-  generateBtn.disabled = authenticated && !hasSubscription;
-  searchBtn.disabled = authenticated && !hasSubscription;
-  translateSentenceBtn.disabled = authenticated && !hasSubscription;
-  if (authenticated && !hasSubscription) {
-    statusText.textContent = "An active Premium or Pro subscription is required for new translations.";
-    translationStatus.textContent = "Subscription required";
-  }
+  generateBtn.disabled = false;
+  searchBtn.disabled = false;
+  translateSentenceBtn.disabled = false;
   if (!authenticated) {
     profileMenu.classList.add("hidden");
     profileBtn.setAttribute("aria-expanded", "false");

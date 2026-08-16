@@ -31,7 +31,7 @@ const aiRequestTimeoutMs = Number(process.env.AI_REQUEST_TIMEOUT_MS || 15000);
 const ttsRequestTimeoutMs = Number(process.env.TTS_REQUEST_TIMEOUT_MS || 30000);
 const freeAccountLimitPerMinute = Number(process.env.FREE_ACCOUNT_LIMIT_PER_MINUTE || 2);
 const freeAccountLimitPerHour = Number(process.env.FREE_ACCOUNT_LIMIT_PER_HOUR || 20);
-const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 50);
+const freeAccountLimitPerDay = Number(process.env.NO_PLAN_REQUEST_LIMIT_PER_DAY || 10);
 const loginRateLimitWindowMs = Number(process.env.LOGIN_RATE_LIMIT_WINDOW_MS || 15 * 60 * 1000);
 const loginRateLimitMax = Number(process.env.LOGIN_RATE_LIMIT_MAX || 5);
 const loginRateLimitLockoutMs = Number(process.env.LOGIN_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
@@ -44,8 +44,8 @@ const passwordResetRateLimitIpMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT
 const passwordResetRateLimitEmailMax = Number(process.env.PASSWORD_RESET_RATE_LIMIT_EMAIL_MAX || 3);
 const passwordResetRateLimitLockoutMs = Number(process.env.PASSWORD_RESET_RATE_LIMIT_LOCKOUT_MS || 15 * 60 * 1000);
 const unverifiedAccountCleanupIntervalMs = 60 * 60 * 1000;
-const freeSessionLimit = Number(process.env.FREE_SESSION_LIMIT || 5);
-const freeVocabGenerationLimit = Number(process.env.FREE_VOCAB_GENERATION_LIMIT || 2);
+const freeSessionLimit = Number(process.env.GUEST_SENTENCE_TRANSLATION_LIMIT || 2);
+const freeVocabGenerationLimit = Number(process.env.GUEST_VOCABULARY_LIMIT || 2);
 const adminUserLimit = Math.max(1, Math.min(Number(process.env.ADMIN_USER_LIMIT || 100) || 100, 500));
 const maxDailyUniqueUsers = Number(process.env.MAX_DAILY_UNIQUE_USERS || 50000);
 const maxDistinctVocab = Number(process.env.MAX_DISTINCT_VOCAB || 50000);
@@ -403,9 +403,20 @@ function sendUsageError(res, error) {
 }
 
 async function reserveTranslationUsage(req, res, type) {
+  if (!req.user) return { guestReservation: true };
+
   try {
     return await usageService.reserve(req.user.id, type, translationRequestId(req));
   } catch (error) {
+    if (error instanceof UsageError && error.code === "SUBSCRIPTION_REQUIRED" && req.user) {
+      const freeReservation = await reserveAuthenticatedUsage(
+        req,
+        res,
+        type === "vocabulary" ? "vocab" : "translation",
+        1,
+      );
+      return freeReservation.allowed ? { freeReservation } : null;
+    }
     if (error instanceof UsageError) {
       sendUsageError(res, error);
       return null;
@@ -415,12 +426,17 @@ async function reserveTranslationUsage(req, res, type) {
 }
 
 async function refundTranslationUsage(reservation) {
-  if (!reservation) return;
+  if (!reservation || reservation.freeReservation || reservation.guestReservation) return;
   try {
     await usageService.refund(reservation);
   } catch (error) {
     console.error(JSON.stringify({ event: "usage.refund_failed", user_id: reservation.userId, translation_request_id: reservation.requestId, error: error.message }));
   }
+}
+
+async function finalizeTranslationUsage(reservation) {
+  if (!reservation?.freeReservation) return true;
+  return reservation.freeReservation.recordSuccess(1);
 }
 
 function validateAccountInput(email, password) {
@@ -1004,7 +1020,7 @@ function ttsIdentity(req, res) {
     userId: null,
     guestId: ensureGuestId(req, res),
     subjectHash: anonymousQuotaKey(req),
-    plan: "free",
+    plan: "guest",
   };
 }
 
@@ -2154,12 +2170,15 @@ app.get("/api/session", async (req, res, next) => {
     const user = await readUserFromSession(req);
     const subscription = user && subscriptionService ? await subscriptionService.getSubscriptionSummary(user.id) : null;
     const plan = subscription?.plan || null;
+    const noPlanUsage = user && !subscription
+      ? planUsagePayload("free", await getPlanUsageToday(user.id))
+      : null;
     const guestId = ensureGuestId(req, res);
     const ttsUsage = dbPool
       ? await getTtsUsage(
           user
             ? { userId: Number(user.id), guestId: null, subjectHash: null, plan }
-            : { userId: null, guestId, subjectHash: anonymousQuotaKey(req), plan: "free" },
+            : { userId: null, guestId, subjectHash: anonymousQuotaKey(req), plan: "guest" },
         )
       : { limitMs: 10 * 60 * 1000, remainingMs: 10 * 60 * 1000, usedMs: 0, window: "hour" };
     res.json({
@@ -2167,10 +2186,15 @@ app.get("/api/session", async (req, res, next) => {
       configured: authConfigured(),
       email: user?.email || null,
       isAdmin: isAdminUser(user),
-      quota: null,
+      quota: user
+        ? noPlanUsage
+        : quotaPayload(maxQuotaUsage(
+            await getGuestUsage(guestId),
+            await getAnonymousUsage(anonymousQuotaKey(req)),
+          )),
       plan,
       planLabel: subscription?.planName || null,
-      planUsage: subscription?.usage || null,
+      planUsage: subscription?.usage || noPlanUsage,
       subscription,
       ttsUsage: ttsUsagePayload(ttsUsage),
     });
@@ -2804,9 +2828,9 @@ app.delete("/api/admin/users/:id", requireAdmin, async (req, res, next) => {
   }
 });
 
-app.use("/api/vocab", requireAuth);
-app.use("/api/search-vocab", requireAuth);
-app.use("/api/translate-sentence", requireAuth);
+app.use("/api/vocab", allowAuthenticatedOrGuestQuota("vocab"));
+app.use("/api/search-vocab", allowAuthenticatedOrGuestQuota("vocab"));
+app.use("/api/translate-sentence", allowAuthenticatedOrGuestQuota("translation"));
 app.use("/api/tts", attachOptionalUser);
 app.use((req, res, next) => {
   if (req.path !== "/metrics") {
@@ -2926,6 +2950,7 @@ Use academic IELTS vocabulary, natural ${targetLabel} translations, and no markd
     }
 
     const words = generated.words.slice(0, 20);
+    if (!(await finalizeTranslationUsage(usageReservation))) return;
     recordGeneratedWords(words);
     res.json({ words });
   } catch (error) {
@@ -2978,6 +3003,7 @@ Use natural ${targetLabel} translations and no markdown.
     if (!generated.word) {
       throw new Error("Generation service returned invalid data.");
     }
+    if (!(await finalizeTranslationUsage(usageReservation))) return;
     recordGeneratedWords([generated]);
     res.json({ word: generated });
   } catch (error) {
@@ -3069,6 +3095,7 @@ Use the Band 8-9 requirements for the ${targetLabel} translation while preservin
     if (!generated.translation) {
       throw new Error("AI service returned invalid translation data.");
     }
+    if (!(await finalizeTranslationUsage(usageReservation))) return;
     recordSentenceTranslation();
     res.json(generated);
   } catch (error) {
