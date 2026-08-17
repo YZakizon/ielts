@@ -1,11 +1,11 @@
-const freeAccountLimitPerDay = Number(process.env.FREE_ACCOUNT_LIMIT_PER_DAY || 50);
+const freeAccountLimitPerDay = Number(process.env.NO_PLAN_REQUEST_LIMIT_PER_DAY || 10);
 
 const accountPlans = {
   free: {
     label: "Free",
-    vocabDailyLimit: Number(process.env.FREE_ACCOUNT_VOCAB_DAILY_LIMIT || freeAccountLimitPerDay),
-    translationDailyLimit: Number(process.env.FREE_ACCOUNT_TRANSLATION_DAILY_LIMIT || freeAccountLimitPerDay),
-    ttsLimitMinutes: Number(process.env.FREE_TTS_HOURLY_LIMIT_MINUTES || 10),
+    vocabDailyLimit: Number(process.env.NO_PLAN_VOCAB_DAILY_LIMIT || freeAccountLimitPerDay),
+    translationDailyLimit: Number(process.env.NO_PLAN_SENTENCE_DAILY_LIMIT || freeAccountLimitPerDay),
+    ttsLimitMinutes: Number(process.env.NO_PLAN_TTS_HOURLY_LIMIT_MINUTES || 15),
     ttsWindow: "hour",
   },
   premium: {
@@ -52,6 +52,12 @@ function dailyLimitForPlan(plan, quotaType) {
 }
 
 function ttsLimitForPlan(plan) {
+  if (plan === "guest") {
+    return {
+      limitMs: Number(process.env.GUEST_TTS_HOURLY_LIMIT_MINUTES || 10) * 60 * 1000,
+      window: "hour",
+    };
+  }
   const definition = accountPlans[normalizeAccountPlan(plan)];
   return {
     limitMs: definition.ttsLimitMinutes === null ? null : definition.ttsLimitMinutes * 60 * 1000,
